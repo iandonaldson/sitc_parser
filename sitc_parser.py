@@ -1,5 +1,6 @@
 import time
 import re
+import tempfile
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -11,11 +12,16 @@ from bs4 import BeautifulSoup
 def fetch_sitc_title_auths_link():
     url = "https://www.sitcancer.org/2024/abstracts/titles-and-publications"
     
-    # Setup Selenium WebDriver
+    # Create a unique temporary directory for user data
+    temp_user_data_dir = tempfile.mkdtemp()
+    
+    # Setup Selenium WebDriver with isolated profile
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")  # Run in headless mode
+    options.add_argument(f"--user-data-dir={temp_user_data_dir}")  # Prevent session conflict
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")  # Improve stability
+    options.add_argument("--start-maximized")  # Ensure full content visibility
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     driver.get(url)
@@ -73,15 +79,18 @@ def fetch_sitc_title_auths_link():
 
 # Function to fetch abstracts from DOI links
 def fetch_sitc_abstracts(df):
-    
-    
     abstracts = []
+    
+    # Create a unique temporary directory for user data
+    temp_user_data_dir = tempfile.mkdtemp()
     
     # Setup Selenium WebDriver
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")  # Run in headless mode
+    options.add_argument(f"--user-data-dir={temp_user_data_dir}")  # Prevent session conflict
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")  
+    options.add_argument("--start-maximized")  
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
@@ -92,14 +101,19 @@ def fetch_sitc_abstracts(df):
             continue
         
         driver.get(doi_link)
-        time.sleep(3)  # Wait for page to load
+        time.sleep(5)  # Increased wait time to allow JavaScript to load content
         
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
+        # Save HTML for debugging
+        with open(f"debug_doi_page_{index}.html", "w", encoding="utf-8") as f:
+            f.write(soup.prettify())
+        print(f"Saved HTML snapshot for {doi_link}")
+        
         # Extract abstract content
-        abstract_section = soup.find("div", class_="abstract-section")
-        if abstract_section:
-            abstract_text = " ".join([p.get_text() for p in abstract_section.find_all("p")])
+        abstract_sections = soup.find_all("div", class_="abstract-section")
+        if abstract_sections:
+            abstract_text = " ".join([section.get_text(strip=True) for section in abstract_sections])
         else:
             abstract_text = "No Abstract Found"
         
@@ -110,20 +124,13 @@ def fetch_sitc_abstracts(df):
     # Store in DataFrame
     df_abstracts = pd.DataFrame({"DOI Link": df["DOI Link"], "Abstract": abstracts})
     
-    
-    
     return df_abstracts
 
 # Example usage
 df = fetch_sitc_title_auths_link()
-# Write DataFrame to a TSV file
 df.to_csv("sitc_title_auth_link.tsv", index=False, sep="\t")
 print("Data saved to sitc_title_auth_link.tsv")
-    
 
 df_abstracts = fetch_sitc_abstracts(df)
-
-df_abstracts.to_csv("link_abstract.tsv", index=False, sep="	")
+df_abstracts.to_csv("link_abstract.tsv", index=False, sep="\t")
 print("Data saved to link_abstract.tsv")
-
-

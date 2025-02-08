@@ -1,6 +1,5 @@
 import time
 import re
-import tempfile
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -12,18 +11,16 @@ from bs4 import BeautifulSoup
 def fetch_sitc_title_auths_link():
     url = "https://www.sitcancer.org/2024/abstracts/titles-and-publications"
     
-    # Create a unique temporary directory for user data
-    temp_user_data_dir = tempfile.mkdtemp()
-    
-    # Setup Selenium WebDriver with isolated profile
+    # Setup Selenium WebDriver
     options = webdriver.ChromeOptions()
-    options.add_argument(f"--user-data-dir={temp_user_data_dir}")  # Prevent session conflict
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")  # Improve stability
     options.add_argument("--start-maximized")  # Ensure full content visibility
-    
+    options.add_argument("--incognito")  # Use an incognito session to avoid conflicts
+
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
     driver.get(url)
     time.sleep(5)  # Wait for JavaScript to load content
     
@@ -81,16 +78,13 @@ def fetch_sitc_title_auths_link():
 def fetch_sitc_abstracts(df):
     abstracts = []
     
-    # Create a unique temporary directory for user data
-    temp_user_data_dir = tempfile.mkdtemp()
-    
     # Setup Selenium WebDriver
     options = webdriver.ChromeOptions()
-    options.add_argument(f"--user-data-dir={temp_user_data_dir}")  # Prevent session conflict
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")  
     options.add_argument("--start-maximized")  
+    options.add_argument("--incognito")  # Use an incognito session to avoid conflicts
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     

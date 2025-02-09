@@ -1,8 +1,8 @@
 # sitc_parser
 
 ## use
-chmod +x install_dependencies.sh
-./install_dependencies.sh
-source sitc_env/bin/activate
-
-python sitc_parser.py
+chmod +x install_dependencies.sh  
+./install_dependencies.sh  
+source sitc_env/bin/activate  
+  
+python sitc_parser.py  

@@ -1,106 +1,141 @@
-# sitc_parser
+# **SITC Parser**
 
-## use
-chmod +x install_dependencies.sh  
-./install_dependencies.sh  
-source sitc_env/bin/activate  
-  
-python sitc_parser.py  
-
-
-
-**Sharing the Environment in GitHub Codespace**, you can save and share the environment by following these steps:
-
-### **1. Use a `devcontainer.json` Configuration (Best Approach)**
-GitHub Codespaces uses **Dev Containers** to define the development environment. You can specify dependencies, extensions, and configurations in a `devcontainer.json` file.
-
-#### **Step 1: Create the `.devcontainer` Directory**
-In the root of your repository, create a folder named `.devcontainer/`, and inside it, create a file named `devcontainer.json`:
-
-```
-mkdir -p .devcontainer && touch .devcontainer/devcontainer.json
-```
-
-#### **Step 2: Define the Development Environment**
-Edit `.devcontainer/devcontainer.json` and add:
-
-```json
-{
-  "name": "SITC Parser Dev Environment",
-  "image": "mcr.microsoft.com/devcontainers/python:3.12", 
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:1": {}
-  },
-  "postCreateCommand": "bash .devcontainer/setup.sh",
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "ms-toolsai.jupyter",
-        "ms-vscode-remote.remote-containers"
-      ]
-    }
-  },
-  "forwardPorts": [9222]
-}
-```
-- This sets up a **Python 3.12 environment** inside Codespaces.
-- It **installs extensions** for Python and Jupyter.
-- The script `.devcontainer/setup.sh` will be executed after the container is created.
+This repository contains a Python-based web scraper that extracts abstracts and metadata from the **Society for Immunotherapy of Cancer (SITC) conference website**. The script uses **Selenium WebDriver** (with stealth techniques) and **BeautifulSoup** for structured data extraction.
 
 ---
 
-### **2. Automate Dependency Installation**
-Create a **setup script** `.devcontainer/setup.sh` to install Selenium, Chrome, and WebDriver:
+## **1. Setting Up the Environment in GitHub Codespaces**
 
-```bash
-#!/bin/bash
-set -e  # Stop on error
+If you are using **GitHub Codespaces**, the environment is pre-configured using a **devcontainer setup**.
 
-echo "Updating package list..."
-sudo apt-get update
+### **How it Works**
+- The **`.devcontainer/`** directory contains:
+  - **`devcontainer.json`** → Configures the development environment inside Codespaces.
+  - **`Dockerfile`** (if applicable) → Defines the container image.
+- The **`requirements.txt`** file lists all necessary **Python dependencies**, which are installed automatically.
+- The setup also creates a **virtual environment (`venv`)** to ensure package consistency and isolation from the global Python environment.
 
-echo "Installing dependencies..."
-sudo apt-get install -y wget curl unzip libgbm-dev libnss3 xvfb
+### **Steps to Get Started**
+1. **Open the Repository in GitHub Codespaces**
+   - Click the **“Code”** button in GitHub.
+   - Select **“Codespaces”** and create a new codespace.
 
-echo "Installing Google Chrome..."
-wget -q -O google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo dpkg -i google-chrome.deb || sudo apt-get -fy install
-rm google-chrome.deb
+2. **Wait for the Dev Container to Initialize**
+   - The **`.devcontainer/devcontainer.json`** will:
+     - Install **Python 3**, **Chromium**, **Chromedriver**, and required system libraries.
+     - Set up a **virtual environment (`venv`)** automatically.
+     - Install all dependencies listed in `requirements.txt`.
 
-echo "Installing ChromeDriver..."
-CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
-CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION")
-wget -q "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
-unzip chromedriver_linux64.zip
-sudo mv chromedriver /usr/local/bin/
-rm chromedriver_linux64.zip
-
-echo "Setting up Python environment..."
-pip install --upgrade pip
-pip install selenium webdriver-manager beautifulsoup4 pandas selenium-stealth
-
-echo "Setup completed!"
-```
-- This installs **Google Chrome, ChromeDriver, and necessary Python packages**.
-- The **correct ChromeDriver version** is downloaded dynamically.
-
-**Make the script executable:**
-```bash
-chmod +x .devcontainer/setup.sh
-```
+3. **Verify the Environment Setup**
+   Run the following commands inside the Codespace terminal to check installations:
+   ```bash
+   python3 --version
+   pip --version
+   chromedriver --version
+   ```
+   If valid versions appear, the setup is complete.
 
 ---
 
-### **3. Commit and Share**
-Now commit your changes:
+## **2. Setting Up a Standalone Linux Environment**
+
+If you are working on a **Linux machine**, you can set up the environment using **`install_dependencies.sh`** or manually configuring it using `setup.sh`.
+
+### **Method 1: Using `install_dependencies.sh` (Recommended)**
 ```bash
-git add .devcontainer
-git commit -m "Add devcontainer setup for SITC Parser"
-git push origin main
+chmod +x install_dependencies.sh
+./install_dependencies.sh
+```
+This script will:
+- Install **Python, pip, Chromium, and ChromeDriver**.
+- Set up a **virtual environment (`venv`)** for package isolation.
+- Install required dependencies from `requirements.txt`.
+
+### **Method 2: Using `setup.sh` Manually**
+If you prefer to manually set up the environment, follow these steps:
+```bash
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip chromium-chromedriver
+python3 -m venv sitc_env
+source sitc_env/bin/activate
+pip install -r requirements.txt
+```
+This approach manually installs the necessary tools and sets up a reproducible virtual environment (`venv`).
+
+---
+
+## **3. Basic Usage of `sitc_parser.py`**
+
+To run the SITC parser, execute the following command inside the virtual environment:
+```bash
+python sitc_parser.py
 ```
 
-Now, anyone who **opens this repository in GitHub Codespaces** will have the same environment **pre-installed and ready to use!** 🚀
+### **Output Files**
+- **`sitc_title_auth_link.tsv`** → Contains abstract numbers, titles, authors, and DOI links.
+- **`link_abstract.tsv`** → Contains DOI links and structured abstracts (Background, Methods, Results, Conclusions).
 
-notes
-https://chatgpt.com/c/67a74da3-0570-800a-ae92-d4e7d7c2496e 
+These outputs can be analyzed using **pandas** or any spreadsheet software.
+
+---
+
+## **4. Developing a Project for Reproducibility (Codespace & Standalone)**
+
+### **Key Steps for a Reproducible Environment**
+
+#### **(a) Use a Bash Script to Record Installations**
+Keep track of dependencies and system setup using a script like `install_dependencies.sh`. This ensures all installations are recorded and can be repeated consistently.
+
+#### **(b) Use `venv` for Package Isolation**
+Why?
+- Prevents conflicts with system-installed packages.
+- Ensures reproducibility across different environments.
+
+How to use `venv`:
+```bash
+python3 -m venv sitc_env
+source sitc_env/bin/activate
+```
+After activation, all package installations (`pip install`) will be stored inside `sitc_env`.
+
+#### **(c) Create a `requirements.txt` File**
+Once the correct configuration is determined, generate a list of installed packages:
+```bash
+pip freeze > requirements.txt
+```
+This file can then be used to install dependencies on a new machine:
+```bash
+pip install -r requirements.txt
+```
+
+#### **(d) Create and Use `.devcontainer` for Codespaces**
+Once the project is stable, add a **`.devcontainer/`** directory to ensure automatic environment setup for Codespaces users.
+- Use `devcontainer.json` to specify dependencies.
+- Automate the setup so developers can start coding immediately without manual configuration.
+
+---
+
+## **5. Development Challenges & Lessons Learned**
+
+During the development of this project, several key blockers had to be addressed:
+
+### **(a) Chrome & ChromeDriver Configuration**
+- Initially, there were issues with **headless Chrome mode** and **Chromedriver pathing**.
+- Solution: **Explicitly specify `chromedriver` path** and **use `selenium-stealth` to bypass bot detection**.
+
+### **(b) Identifying Correct HTML Tags**
+- Extracting abstracts required **trial and error** to find the correct **CSS selectors and HTML structure**.
+- Solution: **Save raw HTML pages** to debug and adjust parsing logic dynamically.
+
+### **(c) Critical Packages & Why They Were Needed**
+- **Selenium** → Automates web interactions to retrieve abstracts.
+- **Selenium-Stealth** → Helps bypass anti-bot mechanisms.
+- **BeautifulSoup** → Parses HTML for structured data extraction.
+- **pandas** → Stores results in a structured format.
+
+### **(d) Other Key Lessons**
+- **Use `time.sleep()` intelligently** → Some pages require extra wait time to load dynamic content.
+- **Log key variables** → Debugging output (e.g., `print(doi_link)`) helped pinpoint issues.
+- **Ensure ChromeDriver matches Chrome version** → Version mismatches caused WebDriver errors.
+
+By following these best practices, the project can be **easily replicated and deployed** on **both Codespaces and standalone Linux environments**. 🚀
+

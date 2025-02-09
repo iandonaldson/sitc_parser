@@ -39,7 +39,7 @@ source sitc_env/bin/activate
 
 echo "Installing Python packages..."
 pip install --upgrade pip
-pip install selenium webdriver-manager pandas beautifulsoup4
+pip install selenium selenium-stealth webdriver-manager pandas beautifulsoup4
 
 echo "Setup completed successfully."
 echo "To activate the virtual environment, run: source sitc_env/bin/activate"

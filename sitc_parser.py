@@ -6,6 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
+from selenium_stealth import stealth
 
 # Setup Selenium WebDriver Options once
 def get_chrome_options():
@@ -19,16 +20,29 @@ def get_chrome_options():
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--disable-background-networking")
     options.add_argument("--disable-features=NetworkService")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     return options
 
 # Dynamically manage ChromeDriver
 service = Service(ChromeDriverManager().install())
 options = get_chrome_options()
 
+def setup_driver(service, options):
+    driver = webdriver.Chrome(service=service, options=options)
+    stealth(driver,
+        languages=["en-US", "en"],
+        vendor="Google Inc.",
+        platform="Win32",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True,
+    )
+    return driver
+
 # Function to fetch and parse SITC abstracts using Selenium
 def fetch_sitc_title_auths_link(service, options):
     url = "https://www.sitcancer.org/2024/abstracts/titles-and-publications"
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = setup_driver(service, options)
     driver.get(url)
     time.sleep(5)  # Wait for JavaScript to load content
     
@@ -83,7 +97,7 @@ def fetch_sitc_title_auths_link(service, options):
 # Function to fetch abstracts from DOI links
 def fetch_sitc_abstracts(df, service, options):
     abstracts = []
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = setup_driver(service, options)
   
     for index, row in df.iterrows():
         doi_link = row["DOI Link"]
@@ -97,9 +111,9 @@ def fetch_sitc_abstracts(df, service, options):
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
         # Save HTML for debugging
-        with open(f"debug_doi_page_{index}.html", "w", encoding="utf-8") as f:
-            f.write(soup.prettify())
-        print(f"Saved HTML snapshot for {doi_link}")
+        # with open(f"debug_doi_page_{index}.html", "w", encoding="utf-8") as f:
+        #    f.write(soup.prettify())
+        # print(f"Saved HTML snapshot for {doi_link}")
         
         # Extract abstract content
         abstract_sections = soup.find_all("div", class_="abstract-section")

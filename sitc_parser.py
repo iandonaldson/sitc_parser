@@ -21,8 +21,9 @@ def get_chrome_options():
     options.add_argument("--disable-features=NetworkService")
     return options
 
-# Explicitly set path in Codespaces
-service = Service("/usr/bin/chromedriver")
+# Dynamically manage ChromeDriver
+service = Service(ChromeDriverManager().install())
+options = get_chrome_options()
 
 # Function to fetch and parse SITC abstracts using Selenium
 def fetch_sitc_title_auths_link(service, options):
@@ -117,7 +118,6 @@ def fetch_sitc_abstracts(df, service, options):
     return df_abstracts
 
 # Example usage
-options = get_chrome_options()
 df = fetch_sitc_title_auths_link(service, options)
 df.to_csv("sitc_title_auth_link.tsv", index=False, sep="\t")
 print("Data saved to sitc_title_auth_link.tsv")

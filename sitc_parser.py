@@ -7,26 +7,34 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 
-# Function to fetch and parse SITC abstracts using Selenium
-def fetch_sitc_title_auths_link():
-    url = "https://www.sitcancer.org/2024/abstracts/titles-and-publications"
-    
-    # Setup Selenium WebDriver
+# Setup Selenium WebDriver Options once
+def get_chrome_options():
     options = webdriver.ChromeOptions()
+    options.add_argument("--headless=new")  # Ensure it's running in headless mode
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")  # Improve stability
-    options.add_argument("--start-maximized")  # Ensure full content visibility
-    options.add_argument("--incognito")  # Use an incognito session to avoid conflicts
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--remote-debugging-port=9222")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-features=NetworkService")
+    return options
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+# Explicitly set path in Codespaces
+service = Service("/usr/bin/chromedriver")
 
+# Function to fetch and parse SITC abstracts using Selenium
+def fetch_sitc_title_auths_link(service, options):
+    url = "https://www.sitcancer.org/2024/abstracts/titles-and-publications"
+    driver = webdriver.Chrome(service=service, options=options)
     driver.get(url)
     time.sleep(5)  # Wait for JavaScript to load content
     
     # Extract all page content
     page_source = driver.page_source
-    
+    driver.quit()  # Close browser early
+
     # Split into sections using "Abstract Number"
     sections = page_source.split("Abstract Number")
     
@@ -66,28 +74,16 @@ def fetch_sitc_title_auths_link():
         authors_list.append(authors)
         doi_links.append(doi_link)
     
-    # Close browser
-    driver.quit()
-    
     # Store in DataFrame
     df = pd.DataFrame({"Abstract Number": list(range(1, len(titles) + 1)), "Title": titles, "Authors": authors_list, "DOI Link": doi_links})
     
     return df
 
 # Function to fetch abstracts from DOI links
-def fetch_sitc_abstracts(df):
+def fetch_sitc_abstracts(df, service, options):
     abstracts = []
-    
-    # Setup Selenium WebDriver
-    options = webdriver.ChromeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")  
-    options.add_argument("--start-maximized")  
-    options.add_argument("--incognito")  # Use an incognito session to avoid conflicts
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    
+    driver = webdriver.Chrome(service=service, options=options)
+  
     for index, row in df.iterrows():
         doi_link = row["DOI Link"]
         if doi_link == "No DOI Found":
@@ -121,10 +117,11 @@ def fetch_sitc_abstracts(df):
     return df_abstracts
 
 # Example usage
-df = fetch_sitc_title_auths_link()
+options = get_chrome_options()
+df = fetch_sitc_title_auths_link(service, options)
 df.to_csv("sitc_title_auth_link.tsv", index=False, sep="\t")
 print("Data saved to sitc_title_auth_link.tsv")
 
-df_abstracts = fetch_sitc_abstracts(df)
+df_abstracts = fetch_sitc_abstracts(df, service, options)
 df_abstracts.to_csv("link_abstract.tsv", index=False, sep="\t")
 print("Data saved to link_abstract.tsv")

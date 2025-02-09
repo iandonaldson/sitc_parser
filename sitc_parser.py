@@ -96,13 +96,13 @@ def fetch_sitc_title_auths_link(service, options):
 
 # Function to fetch abstracts from DOI links
 def fetch_sitc_abstracts(df, service, options):
-    abstracts = []
+    abstract_sections = []
     driver = setup_driver(service, options)
   
     for index, row in df.iterrows():
         doi_link = row["DOI Link"]
         if doi_link == "No DOI Found":
-            abstracts.append("No Abstract Found")
+            abstract_sections.append({"DOI Link": doi_link, "Section": "None", "Text": "No Abstract Found"})
             continue
         
         driver.get(doi_link)
@@ -110,24 +110,22 @@ def fetch_sitc_abstracts(df, service, options):
         
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
-        # Save HTML for debugging
-        # with open(f"debug_doi_page_{index}.html", "w", encoding="utf-8") as f:
-        #    f.write(soup.prettify())
-        # print(f"Saved HTML snapshot for {doi_link}")
-        
-        # Extract abstract content
-        abstract_sections = soup.find_all("div", class_="abstract-section")
-        if abstract_sections:
-            abstract_text = " ".join([section.get_text(strip=True) for section in abstract_sections])
+        # Extract structured abstract content
+        abstract_div = soup.find("div", class_="section abstract")
+        if abstract_div:
+            subsections = abstract_div.find_all("div", class_="subsection")
+            for subsection in subsections:
+                heading = subsection.find("strong")
+                section_name = heading.get_text(strip=True) if heading else "Unknown Section"
+                text = subsection.get_text(strip=True).replace(section_name, "", 1).strip()
+                abstract_sections.append({"DOI Link": doi_link, "Section": section_name, "Text": text})
         else:
-            abstract_text = "No Abstract Found"
-        
-        abstracts.append(abstract_text)
+            abstract_sections.append({"DOI Link": doi_link, "Section": "None", "Text": "No Abstract Found"})
     
     driver.quit()
     
     # Store in DataFrame
-    df_abstracts = pd.DataFrame({"DOI Link": df["DOI Link"], "Abstract": abstracts})
+    df_abstracts = pd.DataFrame(abstract_sections)
     
     return df_abstracts
 

@@ -26,7 +26,7 @@ wget -q -O google-chrome.deb https://dl.google.com/linux/direct/google-chrome-st
 sudo dpkg -i google-chrome.deb || sudo apt-get -fy install
 rm google-chrome.deb
 
-# Install matching chrome driver
+# Install matching ChromeDriver version
 echo "Installing ChromeDriver via Chrome for Testing..."
 
 CHROMEDRIVER_URL=$(curl -s https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
@@ -43,12 +43,10 @@ sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
 sudo chmod +x /usr/local/bin/chromedriver
 rm -rf chromedriver.zip chromedriver-linux64
 
-
 # Set up Python virtual environment
 echo "Setting up Python virtual environment..."
-python3 -m venv $WORKSPACE_DIR/sitc_env
-source $WORKSPACE_DIR/sitc_env/bin/activate
-
+python3 -m venv $WORKSPACE_DIR/.venv
+source $WORKSPACE_DIR/.venv/bin/activate
 
 # Upgrade pip
 echo "Upgrading pip..."
@@ -70,7 +68,7 @@ google-chrome --version
 chromedriver --version
 
 # Ensure the environment is activated in every new shell session
-echo "source $WORKSPACE_DIR/sitc_env/bin/activate" >> ~/.bashrc
+echo "source $WORKSPACE_DIR/.venv/bin/activate" >> ~/.bashrc
 
 echo "Setup complete. You may need to restart the terminal or run:"
 echo "source ~/.bashrc"

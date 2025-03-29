@@ -27,6 +27,9 @@ If you are using **GitHub Codespaces**, the environment is pre-configured using 
      - Install all dependencies listed in `requirements.txt`.
 
 3. **Verify the Environment Setup**
+
+   Use Cmd/Ctrl + Shift + P -> View Creation Log to see full logs
+   
    Run the following commands inside the Codespace terminal to check installations:
    ```bash
    python3 --version

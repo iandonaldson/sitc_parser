@@ -26,27 +26,29 @@ wget -q -O google-chrome.deb https://dl.google.com/linux/direct/google-chrome-st
 sudo dpkg -i google-chrome.deb || sudo apt-get -fy install
 rm google-chrome.deb
 
-# Install matching ChromeDriver version
-echo "Fetching latest stable ChromeDriver version..."
-CHROMEDRIVER_VERSION=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json" \
-  | jq -r '.channels.Stable.version')
+# Install matching chrome driver
+echo "Installing ChromeDriver via Chrome for Testing..."
 
-if [ -z "$CHROMEDRIVER_VERSION" ]; then
-  echo "Failed to get latest ChromeDriver version."
+CHROMEDRIVER_URL=$(curl -s https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
+  | jq -r '.channels.Stable.downloads.chromedriver[] | select(.platform == "linux64") | .url')
+
+if [ -z "$CHROMEDRIVER_URL" ]; then
+  echo "Failed to get ChromeDriver download URL."
   exit 1
 fi
 
-echo "Installing ChromeDriver version $CHROMEDRIVER_VERSION..."
-wget -q "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
-unzip chromedriver_linux64.zip
-sudo mv chromedriver /usr/local/bin/
-chmod +x /usr/local/bin/chromedriver
-rm chromedriver_linux64.zip
+wget -q "$CHROMEDRIVER_URL" -O chromedriver.zip
+unzip chromedriver.zip
+sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
+sudo chmod +x /usr/local/bin/chromedriver
+rm -rf chromedriver.zip chromedriver-linux64
+
 
 # Set up Python virtual environment
 echo "Setting up Python virtual environment..."
 python3 -m venv $WORKSPACE_DIR/sitc_env
 source $WORKSPACE_DIR/sitc_env/bin/activate
+
 
 # Upgrade pip
 echo "Upgrading pip..."

@@ -7,9 +7,11 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 from selenium_stealth import stealth
+import random
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 # Setup Selenium WebDriver Options once
-def get_chrome_options():
+def get_chrome_options_x():
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")  # Ensure it's running in headless mode
     options.add_argument("--no-sandbox")
@@ -22,6 +24,21 @@ def get_chrome_options():
     options.add_argument("--disable-features=NetworkService")
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     return options
+
+def get_chrome_options():
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-features=NetworkService")
+    options.add_argument("--remote-debugging-pipe")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    return options
+
 
 # Dynamically manage ChromeDriver
 service = Service(ChromeDriverManager().install())
@@ -94,39 +111,253 @@ def fetch_sitc_title_auths_link(service, options):
     
     return df
 
-# Function to fetch abstracts from DOI links
-def fetch_sitc_abstracts(df, service, options):
+
+def fetch_sitc_abstracts_x(df, service, options):
     abstract_sections = []
     driver = setup_driver(service, options)
-  
+
     for index, row in df.iterrows():
         doi_link = row["DOI Link"]
+        print(f"Trying DOI: {doi_link}")  # Log the current link
+
         if doi_link == "No DOI Found":
-            abstract_sections.append({"DOI Link": doi_link, "Section": "None", "Text": "No Abstract Found"})
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "None",
+                "Text": "No Abstract Found"
+            })
             continue
-        
-        driver.get(doi_link)
-        time.sleep(5)  # Increased wait time to allow JavaScript to load content
-        
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        
-        # Extract structured abstract content
-        abstract_div = soup.find("div", class_="section abstract")
-        if abstract_div:
-            subsections = abstract_div.find_all("div", class_="subsection")
-            for subsection in subsections:
-                heading = subsection.find("strong")
-                section_name = heading.get_text(strip=True) if heading else "Unknown Section"
-                text = subsection.get_text(strip=True).replace(section_name, "", 1).strip()
-                abstract_sections.append({"DOI Link": doi_link, "Section": section_name, "Text": text})
-        else:
-            abstract_sections.append({"DOI Link": doi_link, "Section": "None", "Text": "No Abstract Found"})
-    
+
+        try:
+            driver.set_page_load_timeout(60)  # Seconds
+            driver.get(doi_link)
+            time.sleep(5)  # Allow time for JS content
+
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+
+            # Look for structured abstract
+            abstract_div = soup.find("div", class_="section abstract")
+            if abstract_div:
+                subsections = abstract_div.find_all("div", class_="subsection")
+                if subsections:
+                    for subsection in subsections:
+                        heading = subsection.find("strong")
+                        section_name = heading.get_text(strip=True) if heading else "Unknown Section"
+                        text = subsection.get_text(strip=True).replace(section_name, "", 1).strip()
+                        abstract_sections.append({
+                            "DOI Link": doi_link,
+                            "Section": section_name,
+                            "Text": text
+                        })
+                else:
+                    # Handle abstracts without subsections
+                    text = abstract_div.get_text(strip=True)
+                    abstract_sections.append({
+                        "DOI Link": doi_link,
+                        "Section": "Abstract",
+                        "Text": text
+                    })
+            else:
+                abstract_sections.append({
+                    "DOI Link": doi_link,
+                    "Section": "None",
+                    "Text": "No Abstract Found"
+                })
+
+        except TimeoutException:
+            print(f"⏱️ Timeout loading {doi_link}")
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "Timeout",
+                "Text": "Page load timed out"
+            })
+        except WebDriverException as e:
+            print(f"❌ WebDriver error for {doi_link}: {e}")
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "Error",
+                "Text": f"WebDriver error: {e}"
+            })
+
     driver.quit()
-    
+
     # Store in DataFrame
     df_abstracts = pd.DataFrame(abstract_sections)
-    
+
+    return df_abstracts
+
+
+
+def safe_get(driver, url, retries=3, wait=10):
+    """Try to get a URL with retries and backoff"""
+    for attempt in range(retries):
+        try:
+            driver.set_page_load_timeout(60)
+            driver.get(url)
+            return True
+        except TimeoutException:
+            print(f"⏱️ Timeout on attempt {attempt + 1} for {url}")
+            time.sleep(wait)
+    return False
+
+def fetch_sitc_abstracts_x(df, service, options):
+    abstract_sections = []
+    driver = setup_driver(service, options)
+
+    for index, row in df.iterrows():
+        doi_link = row["DOI Link"]
+        print(f"\n[{index+1}/{len(df)}] Trying DOI: {doi_link}")
+
+        if doi_link == "No DOI Found":
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "None",
+                "Text": "No Abstract Found"
+            })
+            continue
+
+        # Restart driver every 5 entries to reduce memory issues
+        if index % 5 == 0 and index != 0:
+            print("🔁 Restarting driver...")
+            driver.quit()
+            driver = setup_driver(service, options)
+
+        success = safe_get(driver, doi_link)
+        if not success:
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "Timeout",
+                "Text": "Page load timed out after retries"
+            })
+            continue
+
+        time.sleep(5)  # Give the page a moment after load
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        try:
+            abstract_div = soup.find("div", class_="section abstract")
+            if abstract_div:
+                subsections = abstract_div.find_all("div", class_="subsection")
+                if subsections:
+                    for subsection in subsections:
+                        heading = subsection.find("strong")
+                        section_name = heading.get_text(strip=True) if heading else "Unknown Section"
+                        text = subsection.get_text(strip=True).replace(section_name, "", 1).strip()
+                        abstract_sections.append({
+                            "DOI Link": doi_link,
+                            "Section": section_name,
+                            "Text": text
+                        })
+                else:
+                    # Fallback if structured sections missing
+                    text = abstract_div.get_text(strip=True)
+                    abstract_sections.append({
+                        "DOI Link": doi_link,
+                        "Section": "Abstract",
+                        "Text": text
+                    })
+            else:
+                abstract_sections.append({
+                    "DOI Link": doi_link,
+                    "Section": "None",
+                    "Text": "No Abstract Found"
+                })
+        except Exception as e:
+            print(f"❌ Error parsing abstract: {e}")
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "Error",
+                "Text": f"Failed to parse: {e}"
+            })
+
+        # Throttle requests
+        sleep_time = random.uniform(8, 12)
+        print(f"⏳ Sleeping for {sleep_time:.1f} seconds...")
+        time.sleep(sleep_time)
+
+    driver.quit()
+
+    df_abstracts = pd.DataFrame(abstract_sections)
+    return df_abstracts
+
+def fetch_sitc_abstracts(df, service, options):
+    abstract_sections = []
+
+    for index, row in df.iterrows():
+        doi_link = row["DOI Link"]
+        print(f"\n[{index+1}/{len(df)}] Trying DOI: {doi_link}")
+
+        if doi_link == "No DOI Found":
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "None",
+                "Text": "No Abstract Found"
+            })
+            continue
+
+        # Create a fresh driver every time
+        try:
+            driver = setup_driver(service, options)
+
+            success = safe_get(driver, doi_link)
+            if not success:
+                abstract_sections.append({
+                    "DOI Link": doi_link,
+                    "Section": "Timeout",
+                    "Text": "Page load timed out after retries"
+                })
+                driver.quit()
+                continue
+
+            time.sleep(5)
+
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            abstract_div = soup.find("div", class_="section abstract")
+
+            if abstract_div:
+                subsections = abstract_div.find_all("div", class_="subsection")
+                if subsections:
+                    for subsection in subsections:
+                        heading = subsection.find("strong")
+                        section_name = heading.get_text(strip=True) if heading else "Unknown Section"
+                        text = subsection.get_text(strip=True).replace(section_name, "", 1).strip()
+                        abstract_sections.append({
+                            "DOI Link": doi_link,
+                            "Section": section_name,
+                            "Text": text
+                        })
+                else:
+                    text = abstract_div.get_text(strip=True)
+                    abstract_sections.append({
+                        "DOI Link": doi_link,
+                        "Section": "Abstract",
+                        "Text": text
+                    })
+            else:
+                abstract_sections.append({
+                    "DOI Link": doi_link,
+                    "Section": "None",
+                    "Text": "No Abstract Found"
+                })
+
+        except Exception as e:
+            print(f"❌ Error processing {doi_link}: {e}")
+            abstract_sections.append({
+                "DOI Link": doi_link,
+                "Section": "Error",
+                "Text": f"Failed due to exception: {e}"
+            })
+
+        finally:
+            driver.quit()
+
+        # Throttle between requests
+        sleep_time = random.uniform(8, 12)
+        print(f"⏳ Sleeping for {sleep_time:.1f} seconds...")
+        time.sleep(sleep_time)
+
+    df_abstracts = pd.DataFrame(abstract_sections)
     return df_abstracts
 
 # Example usage
@@ -135,5 +366,5 @@ df.to_csv("sitc_title_auth_link.tsv", index=False, sep="\t")
 print("Data saved to sitc_title_auth_link.tsv")
 
 df_abstracts = fetch_sitc_abstracts(df, service, options)
-df_abstracts.to_csv("link_abstract.tsv", index=False, sep="\t")
-print("Data saved to link_abstract.tsv")
+df_abstracts.to_csv("sitc_link_abstract.tsv", index=False, sep="\t")
+print("Data saved to sitc_link_abstract.tsv")

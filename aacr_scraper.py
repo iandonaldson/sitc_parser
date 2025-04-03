@@ -69,6 +69,8 @@ def safe_get(driver, url, retries=3, wait=10):
         try:
             driver.set_page_load_timeout(60)
             driver.get(url)
+            if DEBUG:
+                print(f"[DEBUG] safe_get got {url}")
             return True
         except TimeoutException:
             print(f"⏱️ Timeout on attempt {attempt + 1} for {url}")
@@ -87,7 +89,7 @@ def test_landing_page(driver, url, output_path):
         f.write(driver.page_source)
     print(f"✅ Rendered HTML saved to {output_file}")
 
-def fetch_aacr_title_link_from_html(html_path):
+def fetch_aacr_title_link_from_html_x(html_path):
     with open(html_path, "r", encoding="utf-8") as f:
         soup = BeautifulSoup(f, "html.parser")
 
@@ -105,6 +107,90 @@ def fetch_aacr_title_link_from_html(html_path):
     df = pd.DataFrame(data)
     df["retrieved"] = False
     return df
+
+def fetch_aacr_title_link_from_html_x(service, options, url, session_name, dump_dir, retries=3):
+    for attempt in range(retries):
+        try:
+            driver = setup_driver(service, options)
+            success = safe_get(driver, url)
+            if not success:
+                raise Exception(f"Failed to load {url} after retries")
+
+            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "body")))
+            time.sleep(3)
+
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            base_url = "https://www.abstractsonline.com/pp8/#!/20273/presentation/"
+            data = []
+
+            for h1 in soup.find_all("h1", class_="name"):
+                data_id = h1.get("data-id")
+                title_tag = h1.select_one("span.bodyTitle")
+                if data_id and title_tag:
+                    link = f"{base_url}{data_id}"
+                    title = title_tag.get_text(strip=True)
+                    data.append({
+                        "session": session_name,
+                        "link": link,
+                        "title": title,
+                        "retrieved": False
+                    })
+
+            return pd.DataFrame(data)
+
+        except Exception as e:
+            print(f"❌ Error fetching page {url}: {e}")
+            dump_dir = Path(dump_dir)
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            file_name = f"{session_name.replace(' ', '_')}_{url.split('/')[-1]}.html"
+            dump_path = dump_dir / file_name
+            with open(dump_path, "w", encoding="utf-8") as f:
+                f.write(driver.page_source if 'driver' in locals() else f"Failed to render {url}")
+        finally:
+            if 'driver' in locals():
+                driver.quit()
+
+    return pd.DataFrame(columns=["session", "link", "title", "retrieved"])
+
+def fetch_aacr_title_link_from_html(service, options, url, session_name, dump_dir, retries=3):
+    if DEBUG:
+        print(f"[DEBUG] Trying to fetch url {url} for session {session_name}.")
+    driver = setup_driver(service, options)
+
+    try:
+        success = safe_get(driver, url)
+        if not success:
+            raise Exception("Page load failed after retries")
+
+        time.sleep(10)  # ensure JS executes
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        base_url = "https://www.abstractsonline.com/pp8/#!/20273/presentation/"
+        data = []
+        for h1 in soup.find_all("h1", class_="name"):
+            data_id = h1.get("data-id")
+            title_tag = h1.select_one("span.bodyTitle")
+            if data_id and title_tag:
+                link = f"{base_url}{data_id}"
+                title = title_tag.get_text(strip=True)
+                data.append({"link": link, "title": title, "retrieved": False})
+
+        df = pd.DataFrame(data, columns=["link", "title", "retrieved"])
+        return df
+
+    except Exception as e:
+        print(f"⚠️ Exception in fetch_aacr_title_link_from_html: {e}")
+        page_num = url.split("/")[-1]
+        safe_session = re.sub(r"\W+", "_", session_name)
+        dump_file = dump_dir / f"{safe_session}_PAGE{page_num}.html"
+        with open(dump_file, "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        if DEBUG:
+            print(f"[DEBUG] ❌ Saved failed HTML to {dump_file}")
+        return pd.DataFrame(columns=["link", "title", "retrieved"])
+
+    finally:
+        driver.quit()
 
 def extract_session_name(url):
     match = re.search(r"@[^=/]+=(.*?)/", url)
@@ -125,10 +211,12 @@ def get_total_pages(service, options, url, session_name, dump_dir, retries=3):
             )
             time.sleep(2)
 
-            print(f"[DEBUG] Attempt {attempt}: Displaying results located.")
+            if DEBUG:
+                print(f"[DEBUG] Attempt {attempt}: Displaying results located.")
             headings = driver.execute_script("return [...document.querySelectorAll('h1')].map(e => e.innerText)")
             for text in headings:
-                print(f"[DEBUG] H1 content: {text}")
+                if DEBUG:
+                    print(f"[DEBUG] H1 content: {text}")
                 if text.startswith("Displaying results"):
                     match = re.search(r"of (\d[\d,]*)", text)
                     if match:
@@ -141,7 +229,8 @@ def get_total_pages(service, options, url, session_name, dump_dir, retries=3):
             dump_file = dump_dir / f"{session_name.replace(' ', '_')}.html"
             with open(dump_file, "w", encoding="utf-8") as f:
                 f.write(html)
-            print(f"[DEBUG] Dumped HTML for {session_name} to {dump_file}")
+            if DEBUG:
+                print(f"[DEBUG] Dumped HTML for {session_name} to {dump_file}")
         finally:
             driver.quit()
 
@@ -182,16 +271,79 @@ def estimate_all_sessions(session_urls, service, options, output_path):
         session_ok_file.touch()
         print(f"✅ All sessions had valid page estimates. Flag file created: {session_ok_file}")
 
+def get_links(session_urls, service, options, output_path, max_pages=1000):
+    processed_path = output_path / "processed_session_pages.tsv"
+    links_path = output_path / "aacr_links.tsv"
+    estimates_path = output_path / "session_estimates.tsv"
+    dump_dir = output_path / "html_dumps"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+
+    if processed_path.exists():
+        processed_df = pd.read_csv(processed_path, sep="\t")
+    else:
+        if not estimates_path.exists():
+            print("❌ session_estimates.tsv not found.")
+            return
+        estimates_df = pd.read_csv(estimates_path, sep="\t")
+        processed_df = pd.DataFrame([
+            {"session": row["session"], "page": page, "processed": False}
+            for _, row in estimates_df.iterrows()
+            for page in range(1, row["pages"] + 1)
+        ])
+        processed_df.to_csv(processed_path, sep="\t", index=False)
+
+    if links_path.exists():
+        aacr_links = pd.read_csv(links_path, sep="\t")
+    else:
+        aacr_links = pd.DataFrame(columns=["session", "link", "title", "retrieved"])
+
+    seen_links = set(aacr_links["link"])
+    new_links = []
+
+    for idx, row in processed_df.iterrows():
+        session_name, page_num, processed = row["session"], row["page"], row["processed"]
+        if processed or page_num > max_pages:
+            continue
+
+        url_base = next((u for u in session_urls if extract_session_name(u) == session_name), None)
+        if not url_base:
+            print(f"⚠️ No URL found for session {session_name}")
+            continue
+        url = re.sub(r"/\d+$", f"/{page_num}", url_base)
+
+        try:
+            df = fetch_aacr_title_link_from_html(service, options, url, session_name, dump_dir)
+            df["session"] = session_name
+            df = df[~df["link"].isin(seen_links)]
+            new_links.append(df)
+            processed_df.loc[idx, "processed"] = True
+        except Exception as e:
+            print(f"❌ Failed to fetch page {page_num} of {session_name}: {e}")
+
+    if new_links:
+        combined_df = pd.concat([aacr_links] + new_links, ignore_index=True)
+        links_path.rename(links_path.with_suffix(".bak")) if links_path.exists() else None
+        combined_df.to_csv(links_path, sep="\t", index=False)
+        print(f"✅ Updated aacr_links.tsv with {sum(len(df) for df in new_links)} new entries")
+
+    processed_path.rename(processed_path.with_suffix(".bak")) if processed_path.exists() else None
+    processed_df.to_csv(processed_path, sep="\t", index=False)
+    print(f"📌 Checkpoint saved to {processed_path}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="AACR Abstract Scraper")
     parser.add_argument("--test-landing-page", action="store_true", help="Load and save the first landing page's DOM")
+    parser.add_argument("--test-get-links", action="store_true", help="Run get_links with max_pages=1")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--output", type=str, default="output/aacr", help="Path to save outputs")
     parser.add_argument("--parse-html", action="store_true", help="Extract links and titles from saved HTML file")
     parser.add_argument("--html-path", type=str, default="output/aacr/aacr_test_landing_page.html", help="Path to saved HTML file to parse")
     parser.add_argument("--estimate", action="store_true", help="Estimate pages for each session type")
     parser.add_argument("--build_all", action="store_true", help="Estimate and scrape all AACR sessions")
     args = parser.parse_args()
+
+    import datetime  
 
     session_urls = [
         "https://www.abstractsonline.com/pp8/#!/20273/presentations/@sessiontype=Clinical%20Trials%20Minisymposium/1",
@@ -203,6 +355,8 @@ def main():
         "https://www.abstractsonline.com/pp8/#!/20273/presentations/@sessiontype=Poster%20Session/1"
     ]
 
+    global DEBUG
+    DEBUG = args.debug
     output_path = Path(args.output)
     log_path = output_path / "log.txt"
     output_path.mkdir(parents=True, exist_ok=True)
@@ -210,6 +364,9 @@ def main():
     sys.stdout = TeeLogger(log_path)
     service = Service(ChromeDriverManager().install())
     options = get_chrome_options()
+
+    start_time = datetime.datetime.now()
+    print(f"🚀 Started AACR scraper at {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     if args.test_landing_page:
         driver = setup_driver(service, options)
@@ -227,6 +384,9 @@ def main():
         estimate_all_sessions(session_urls, service, options, output_path)
         return
     
+    if args.test_get_links:
+        get_links(session_urls, service, options, output_path, max_pages=40)
+
     if args.build_all:
         session_ok_file = output_path / "session_estimates_OK"
         attempts = 0
@@ -240,6 +400,10 @@ def main():
         else:
             print("✅ Session estimates OK — ready to scrape.")
         # Optionally continue to scrape all sessions here
+
+    end_time = datetime.datetime.now()
+    elapsed = end_time - start_time
+    print(f"✅ Finished at {end_time.strftime('%Y-%m-%d %H:%M:%S')} (Elapsed time: {elapsed})")
 
 if __name__ == "__main__":
     main()

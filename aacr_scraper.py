@@ -149,35 +149,39 @@ def get_total_pages(service, options, url, session_name, dump_dir, retries=3):
 
 def estimate_all_sessions(session_urls, service, options, output_path):
     output_path.mkdir(parents=True, exist_ok=True)
-    dump_dir = output_path / "html_dumps"
-    dump_dir.mkdir(exist_ok=True)
+    estimates_file = output_path / "session_estimates.tsv"
+    session_ok_file = output_path / "session_estimates_OK"
 
-    estimates_path = output_path / "session_estimates.tsv"
+    existing_estimates = pd.DataFrame()
+    if estimates_file.exists():
+        existing_estimates = pd.read_csv(estimates_file, sep="\t")
+
     session_data = []
-
-    if estimates_path.exists():
-        print(f"[INFO] Reloading existing estimates from {estimates_path}")
-        previous_df = pd.read_csv(estimates_path, sep="\t")
-        previous_sessions = dict(zip(previous_df["session"], previous_df["pages"]))
-    else:
-        previous_sessions = {}
+    retried_sessions = []
 
     for session_url in session_urls:
         session_name = extract_session_name(session_url)
-        print(f"🔍 Estimating session: {session_name}")
+        existing_row = existing_estimates[existing_estimates["session"] == session_name]
 
-        if session_name in previous_sessions and previous_sessions[session_name] > 0:
-            print(f"[SKIP] Already estimated: {session_name} ({previous_sessions[session_name]} pages)")
-            session_data.append({"session": session_name, "pages": previous_sessions[session_name]})
+        if not existing_row.empty and existing_row.iloc[0]["pages"] > 0:
+            session_data.append({"session": session_name, "pages": existing_row.iloc[0]["pages"]})
             continue
 
-        total_pages = get_total_pages(service, options, session_url, session_name, dump_dir)
+        print(f"🔍 Estimating session: {session_name}")
+        total_pages = get_total_pages(service, options, session_url)
         print(f"📄 Estimated pages: {total_pages}")
+
         session_data.append({"session": session_name, "pages": total_pages})
+        retried_sessions.append(session_name)
 
     df = pd.DataFrame(session_data)
-    df.to_csv(estimates_path, sep="\t", index=False)
-    print(f"📊 Session estimates saved to {estimates_path}")
+    df.to_csv(estimates_file, sep="\t", index=False)
+    print(f"📊 Session estimates saved to {estimates_file}")
+
+    if not retried_sessions:
+        session_ok_file.touch()
+        print(f"✅ All sessions had valid page estimates. Flag file created: {session_ok_file}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="AACR Abstract Scraper")
@@ -186,6 +190,7 @@ def main():
     parser.add_argument("--parse-html", action="store_true", help="Extract links and titles from saved HTML file")
     parser.add_argument("--html-path", type=str, default="output/aacr/aacr_test_landing_page.html", help="Path to saved HTML file to parse")
     parser.add_argument("--estimate", action="store_true", help="Estimate pages for each session type")
+    parser.add_argument("--build_all", action="store_true", help="Estimate and scrape all AACR sessions")
     args = parser.parse_args()
 
     session_urls = [
@@ -221,6 +226,20 @@ def main():
     if args.estimate:
         estimate_all_sessions(session_urls, service, options, output_path)
         return
+    
+    if args.build_all:
+        session_ok_file = output_path / "session_estimates_OK"
+        attempts = 0
+        while not session_ok_file.exists() and attempts < 3:
+            print(f"🚧 Running estimate_all_sessions (attempt {attempts + 1})...")
+            estimate_all_sessions(session_urls, service, options, output_path)
+            attempts += 1
+        if not session_ok_file.exists():
+            print("❌ Failed to estimate all sessions after 3 attempts.")
+            return
+        else:
+            print("✅ Session estimates OK — ready to scrape.")
+        # Optionally continue to scrape all sessions here
 
 if __name__ == "__main__":
     main()

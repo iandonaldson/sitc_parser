@@ -385,7 +385,7 @@ def main():
         return
     
     if args.test_get_links:
-        get_links(session_urls, service, options, output_path, max_pages=40)
+        get_links(session_urls, service, options, output_path, max_pages=640)
 
     if args.build_all:
         session_ok_file = output_path / "session_estimates_OK"
@@ -401,9 +401,17 @@ def main():
             print("✅ Session estimates OK — ready to scrape.")
         # Optionally continue to scrape all sessions here
 
+    # cleanup
     end_time = datetime.datetime.now()
     elapsed = end_time - start_time
     print(f"✅ Finished at {end_time.strftime('%Y-%m-%d %H:%M:%S')} (Elapsed time: {elapsed})")
+
+    # Rename log.txt to include a timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_backup_path = output_path / f"log_{timestamp}.txt"
+    log_path.rename(log_backup_path)
+
+
 
 if __name__ == "__main__":
     main()

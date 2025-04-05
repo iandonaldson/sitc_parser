@@ -38,6 +38,18 @@ class TeeLogger:
         self.terminal.flush()
         self.log.flush()
 
+def set_output_paths(base_path):
+    return {
+        "output" : base_path,
+        "log": base_path / "log.txt",
+        "get_links_finished": base_path / "GET_LINKS_FINISHED",
+        "session_estimates_ok": base_path / "SESSION_ESTIMATES_FINISHED",
+        "session_estimates": base_path / "session_estimates.tsv",
+        "processed_pages": base_path / "processed_session_pages.tsv",
+        "aacr_links": base_path / "aacr_links.tsv",
+        "html_dumps": base_path / "html_dumps"
+    }
+
 def get_chrome_options():
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
@@ -77,7 +89,8 @@ def safe_get(driver, url, retries=3, wait=10):
             time.sleep(wait)
     return False
 
-def test_landing_page(driver, url, output_path):
+def test_landing_page(driver, url, paths):
+    output_path = paths["output"]
     output_path.mkdir(parents=True, exist_ok=True)
     output_file = output_path / "test_landing_page.html"
 
@@ -88,69 +101,6 @@ def test_landing_page(driver, url, output_path):
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(driver.page_source)
     print(f"✅ Rendered HTML saved to {output_file}")
-
-def fetch_aacr_title_link_from_html_x(html_path):
-    with open(html_path, "r", encoding="utf-8") as f:
-        soup = BeautifulSoup(f, "html.parser")
-
-    base_url = "https://www.abstractsonline.com/pp8/#!/20273/presentation/"
-
-    data = []
-    for h1 in soup.find_all("h1", class_="name"):
-        data_id = h1.get("data-id")
-        title_tag = h1.select_one("span.bodyTitle")
-        if data_id and title_tag:
-            link = f"{base_url}{data_id}"
-            title = title_tag.get_text(strip=True)
-            data.append({"link": link, "title": title})
-
-    df = pd.DataFrame(data)
-    df["retrieved"] = False
-    return df
-
-def fetch_aacr_title_link_from_html_x(service, options, url, session_name, dump_dir, retries=3):
-    for attempt in range(retries):
-        try:
-            driver = setup_driver(service, options)
-            success = safe_get(driver, url)
-            if not success:
-                raise Exception(f"Failed to load {url} after retries")
-
-            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "body")))
-            time.sleep(3)
-
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            base_url = "https://www.abstractsonline.com/pp8/#!/20273/presentation/"
-            data = []
-
-            for h1 in soup.find_all("h1", class_="name"):
-                data_id = h1.get("data-id")
-                title_tag = h1.select_one("span.bodyTitle")
-                if data_id and title_tag:
-                    link = f"{base_url}{data_id}"
-                    title = title_tag.get_text(strip=True)
-                    data.append({
-                        "session": session_name,
-                        "link": link,
-                        "title": title,
-                        "retrieved": False
-                    })
-
-            return pd.DataFrame(data)
-
-        except Exception as e:
-            print(f"❌ Error fetching page {url}: {e}")
-            dump_dir = Path(dump_dir)
-            dump_dir.mkdir(parents=True, exist_ok=True)
-            file_name = f"{session_name.replace(' ', '_')}_{url.split('/')[-1]}.html"
-            dump_path = dump_dir / file_name
-            with open(dump_path, "w", encoding="utf-8") as f:
-                f.write(driver.page_source if 'driver' in locals() else f"Failed to render {url}")
-        finally:
-            if 'driver' in locals():
-                driver.quit()
-
-    return pd.DataFrame(columns=["session", "link", "title", "retrieved"])
 
 def fetch_aacr_title_link_from_html(service, options, url, session_name, dump_dir, retries=3):
     if DEBUG:
@@ -236,18 +186,17 @@ def get_total_pages(service, options, url, session_name, dump_dir, retries=3):
 
     return -1
 
-def estimate_all_sessions(session_urls, service, options, output_path):
-    output_path.mkdir(parents=True, exist_ok=True)
-    estimates_file = output_path / "session_estimates.tsv"
-    session_ok_file = output_path / "session_estimates_OK"
+
+def estimate_all_sessions(session_urls, service, options, paths):
+    paths["output"].mkdir(parents=True, exist_ok=True)
+    estimates_file = paths["session_estimates"] 
 
     existing_estimates = pd.DataFrame()
     if estimates_file.exists():
         existing_estimates = pd.read_csv(estimates_file, sep="\t")
-
     session_data = []
     retried_sessions = []
-
+    
     for session_url in session_urls:
         session_name = extract_session_name(session_url)
         existing_row = existing_estimates[existing_estimates["session"] == session_name]
@@ -257,26 +206,28 @@ def estimate_all_sessions(session_urls, service, options, output_path):
             continue
 
         print(f"🔍 Estimating session: {session_name}")
-        total_pages = get_total_pages(service, options, session_url)
+        total_pages = get_total_pages(service, options, session_url, session_name, paths["html_dumps"])
         print(f"📄 Estimated pages: {total_pages}")
-
         session_data.append({"session": session_name, "pages": total_pages})
         retried_sessions.append(session_name)
 
     df = pd.DataFrame(session_data)
+    if estimates_file.exists():
+        estimates_file.rename(estimates_file.with_suffix(".bak"))
     df.to_csv(estimates_file, sep="\t", index=False)
     print(f"📊 Session estimates saved to {estimates_file}")
 
     if not retried_sessions:
-        session_ok_file.touch()
-        print(f"✅ All sessions had valid page estimates. Flag file created: {session_ok_file}")
+        paths["session_estimates_ok"].touch()
+        print(f"✅ All sessions had valid page estimates. Flag file created: {paths['session_estimates_ok']}")
 
-def get_links(session_urls, service, options, output_path, max_pages=1000):
-    processed_path = output_path / "processed_session_pages.tsv"
-    links_path = output_path / "aacr_links.tsv"
-    estimates_path = output_path / "session_estimates.tsv"
-    dump_dir = output_path / "html_dumps"
+def get_links(session_urls, service, options, paths, max_pages=100):
+    processed_path = paths["processed_pages"]
+    links_path = paths["aacr_links"]
+    estimates_path = paths["session_estimates"]
+    dump_dir = paths["html_dumps"]
     dump_dir.mkdir(parents=True, exist_ok=True)
+    finished_path = paths["get_links_finished"]
 
     if processed_path.exists():
         processed_df = pd.read_csv(processed_path, sep="\t")
@@ -322,25 +273,133 @@ def get_links(session_urls, service, options, output_path, max_pages=1000):
 
     if new_links:
         combined_df = pd.concat([aacr_links] + new_links, ignore_index=True)
-        links_path.rename(links_path.with_suffix(".bak")) if links_path.exists() else None
+        if links_path.exists():
+            links_path.rename(links_path.with_suffix(".bak"))
         combined_df.to_csv(links_path, sep="\t", index=False)
-        print(f"✅ Updated aacr_links.tsv with {sum(len(df) for df in new_links)} new entries")
+        total_new = sum(len(x) for x in new_links)
+        print(f"✅ Updated aacr_links.tsv with {total_new} new entries")
 
-    processed_path.rename(processed_path.with_suffix(".bak")) if processed_path.exists() else None
+    if processed_path.exists():
+        processed_path.rename(processed_path.with_suffix(".bak"))
     processed_df.to_csv(processed_path, sep="\t", index=False)
     print(f"📌 Checkpoint saved to {processed_path}")
+
+    if processed_df["processed"].all():
+        finished_path.touch()
+        print(f"✅ All pages have been processed. Flag file created: {finished_path}")
+    else:
+        remaining = (~processed_df["processed"]).sum()
+        print(f"ℹ️ {remaining} pages remaining unprocessed.")
+
+def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
+
+    links_path = paths["aacr_links"]
+    abstracts_path = paths["aacr_abstracts"]
+    finished_flag = paths["get_abstracts_finished"]
+
+    if not links_path.exists():
+        print("❌ aacr_links.tsv not found.")
+        return
+
+    links_df = pd.read_csv(links_path, sep="\t")
+    pending = links_df[links_df["retrieved"] == False]
+
+    if pending.empty:
+        finished_flag.touch()
+        print(f"✅ All abstracts retrieved. Flag file created: {finished_flag}")
+        return
+
+    if abstracts_path.exists():
+        abstracts_df = pd.read_csv(abstracts_path, sep="\t")
+    else:
+        abstracts_df = pd.DataFrame(columns=["link", "title", "authors", "abstract", "status"])
+
+    new_rows = []
+    for idx, row in pending.head(max_pages).iterrows():
+        link = row["link"]
+        title = row["title"]
+        session = row["session"]
+
+        print(f"🧲 Fetching abstract for: {title}")
+
+        try:
+            driver = setup_driver(service, options)
+            success = safe_get(driver, link)
+            if not success:
+                raise Exception("Failed to load page")
+
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+
+            # TODO: Extract real content
+            authors = "[PLACEHOLDER: Authors]"
+            abstract = "[PLACEHOLDER: Abstract]"
+            status = "complete"
+
+            new_rows.append({
+                "link": link,
+                "title": title,
+                "authors": authors,
+                "abstract": abstract,
+                "status": status
+            })
+
+            links_df.at[idx, "retrieved"] = True
+
+            if save_html:
+                page_num = idx + 1
+                dump_file = paths["output"] / f"abstract_PAGE{page_num}.html"
+                with open(dump_file, "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+                if DEBUG:
+                    print(f"[DEBUG] Saved HTML for abstract page to {dump_file}")
+
+
+        except Exception as e:
+            print(f"❌ Failed to fetch abstract for {title}: {e}")
+            new_rows.append({
+                "link": link,
+                "title": title,
+                "authors": "",
+                "abstract": "",
+                "status": "retry"
+            })
+
+        finally:
+            driver.quit()
+            time.sleep(random.uniform(2, 4))
+
+    # Save updated abstract data
+    if new_rows:
+        updated_df = pd.DataFrame(new_rows)
+        if abstracts_path.exists():
+            abstracts_path.rename(abstracts_path.with_suffix(".bak"))
+            abstracts_df = pd.concat([abstracts_df, updated_df], ignore_index=True)
+            abstracts_df.drop_duplicates(subset=["link"], inplace=True)
+        else:
+            abstracts_df = updated_df
+        abstracts_df.to_csv(abstracts_path, sep="\t", index=False)
+        print(f"📄 Abstracts updated and saved to {abstracts_path}")
+
+    # Save updated links with backups
+    links_path.rename(links_path.with_suffix(".bak"))
+    links_df.to_csv(links_path, sep="\t", index=False)
+    print(f"📌 Updated aacr_links.tsv with retrieval status.")
+
+    if links_df["retrieved"].all():
+        finished_flag.touch()
+        print(f"✅ All abstracts have been retrieved. Flag file created: {finished_flag}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="AACR Abstract Scraper")
     parser.add_argument("--test-landing-page", action="store_true", help="Load and save the first landing page's DOM")
     parser.add_argument("--test-get-links", action="store_true", help="Run get_links with max_pages=1")
+    parser.add_argument("--test-get-abstracts", action="store_true", help="Test get_abstracts with 1 page and save HTML")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--output", type=str, default="output/aacr", help="Path to save outputs")
-    parser.add_argument("--parse-html", action="store_true", help="Extract links and titles from saved HTML file")
-    parser.add_argument("--html-path", type=str, default="output/aacr/aacr_test_landing_page.html", help="Path to saved HTML file to parse")
     parser.add_argument("--estimate", action="store_true", help="Estimate pages for each session type")
-    parser.add_argument("--build_all", action="store_true", help="Estimate and scrape all AACR sessions")
+    parser.add_argument("--build-all", action="store_true", help="Estimate and scrape all AACR sessions")
+    parser.add_argument("--max-calls-per-session", type=int, default=10, help="Max get_links attempts to process all session pages")
     args = parser.parse_args()
 
     import datetime  
@@ -358,10 +417,11 @@ def main():
     global DEBUG
     DEBUG = args.debug
     output_path = Path(args.output)
-    log_path = output_path / "log.txt"
     output_path.mkdir(parents=True, exist_ok=True)
+    global paths
+    paths = set_output_paths(output_path)
 
-    sys.stdout = TeeLogger(log_path)
+    sys.stdout = TeeLogger(paths["log"])
     service = Service(ChromeDriverManager().install())
     options = get_chrome_options()
 
@@ -370,36 +430,58 @@ def main():
 
     if args.test_landing_page:
         driver = setup_driver(service, options)
-        test_landing_page(driver, session_urls[0], output_path)
+        test_landing_page(driver, session_urls[0], paths)
         driver.quit()
         return
-
-    if args.parse_html:
-        df = fetch_aacr_title_link_from_html(args.html_path)
-        df.to_csv(output_path / "aacr_links.tsv", sep="\t", index=False)
-        print("✅ Extracted links and titles saved to output/aacr/aacr_links.tsv")
-        return
-
-    if args.estimate:
-        estimate_all_sessions(session_urls, service, options, output_path)
-        return
     
+    if args.estimate:
+        estimate_all_sessions(session_urls, service, options, paths)
+        return
+       
     if args.test_get_links:
-        get_links(session_urls, service, options, output_path, max_pages=640)
+        get_links(session_urls, service, options, paths, max_pages=10)
+
+    if args.test_get_abstracts:
+        get_abstracts(service, options, paths, max_pages=1, save_html=True)
+        return
 
     if args.build_all:
-        session_ok_file = output_path / "session_estimates_OK"
+        # estimate_all_sessions
         attempts = 0
-        while not session_ok_file.exists() and attempts < 3:
+        while not paths["session_estimates_ok"].exists() and attempts < 3:
             print(f"🚧 Running estimate_all_sessions (attempt {attempts + 1})...")
-            estimate_all_sessions(session_urls, service, options, output_path)
+            estimate_all_sessions(session_urls, service, options, paths)
             attempts += 1
-        if not session_ok_file.exists():
+        if not paths["session_estimates_ok"].exists():
             print("❌ Failed to estimate all sessions after 3 attempts.")
             return
         else:
-            print("✅ Session estimates OK — ready to scrape.")
-        # Optionally continue to scrape all sessions here
+            print("✅ Session estimates OK — ready to get links.")
+        # get_links
+        max_calls = args.max_calls_per_session
+        calls = 0
+
+        while not paths["get_links_finished"].exists() and calls < max_calls:
+            print(f"🚧 Running get_links (attempt {calls + 1})...")
+            get_links(session_urls, service, options, paths, max_pages=20)
+            calls += 1
+
+        if not paths["get_links_finished"].exists():
+            print("❌ get_links did not complete after maximum allowed attempts.")
+            return
+        else:
+            print("✅ Links have been retrieved from all session pages. Ready to retrieve abstracts.")
+        # get abstracts
+        while not paths["get_abstracts_finished"].exists() and calls < max_calls:
+            print(f"🚧 Running get_abstracts (attempt {calls + 1})...")
+            get_abstracts(service, options, paths)
+            calls += 1
+
+        if not paths["get_abstracts_finished"].exists():
+            print("❌ get_abstracts did not complete after maximum allowed attempts.")
+            return
+        else:
+            print("✅ All abstracts have been retrieved for all sessions. Ready to retrieve embargoed abstracts.")
 
     # cleanup
     end_time = datetime.datetime.now()
@@ -407,9 +489,9 @@ def main():
     print(f"✅ Finished at {end_time.strftime('%Y-%m-%d %H:%M:%S')} (Elapsed time: {elapsed})")
 
     # Rename log.txt to include a timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_backup_path = output_path / f"log_{timestamp}.txt"
-    log_path.rename(log_backup_path)
+    paths["log"].rename(log_backup_path)
 
 
 

@@ -1,3 +1,122 @@
+```markdown
+# 🔬 AACR Abstract Scraper
+
+This project scrapes abstract information from the AACR Annual Meeting pages hosted on [abstractsonline.com](https://www.abstractsonline.com). It performs a full pipeline: estimating sessions, extracting links, and retrieving abstracts and authors, saving results in `.tsv` format for downstream analysis.
+
+---
+
+## 🚀 Features
+
+- Estimate number of pages per session type
+- Scrape links to individual abstract presentations
+- Retrieve titles, authors, and abstract text (even if JavaScript-rendered)
+- Save results incrementally with checkpointing and log tracking
+- Designed for GitHub Codespaces or local Python environments
+
+---
+
+## 🧰 Requirements
+
+- Python 3.8+
+- Google Chrome (installed or managed via `webdriver_manager`)
+- `pip install -r requirements.txt`
+
+Recommended:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+---
+
+## 🔧 Usage
+
+All output is written to the `output/aacr` directory by default, and logs are saved per run with timestamped filenames.
+
+### Estimate session sizes
+```bash
+python aacr_scraper.py --estimate
+```
+
+### Run full scraping pipeline (estimate + links + abstracts)
+```bash
+python aacr_scraper.py --build-all
+```
+
+You can control scraper limits:
+```bash
+python aacr_scraper.py --build-all --max-pages 10 --max-calls-per-scraper-session 20 --wait 120
+```
+
+### Test-only commands
+```bash
+python aacr_scraper.py --test-landing-page
+python aacr_scraper.py --test-get-links
+python aacr_scraper.py --test-get-abstracts
+```
+
+---
+
+## ⚙️ Command-line Arguments
+
+| Flag                                 | Description |
+|--------------------------------------|-------------|
+| `--estimate`                         | Estimate pages for each AACR session type |
+| `--build-all`                        | Full pipeline: estimate → links → abstracts |
+| `--test-get-links`                   | Test `get_links` with one page |
+| `--test-get-abstracts`               | Test `get_abstracts` and save rendered HTML |
+| `--test-landing-page`                | Render and save the first session page |
+| `--max-pages`                        | Max pages per scraper function call (default: 10) |
+| `--max-calls-per-scraper-session`   | Max iterations per scraper step (default: 20) |
+| `--wait`                             | Time (seconds) between calls during `--build-all` |
+| `--output`                           | Base output directory (default: `output/aacr`) |
+| `--debug`                            | Enable debug mode for verbose logging |
+
+---
+
+## 📁 Output Files
+
+| File | Description |
+|------|-------------|
+| `session_estimates.tsv`     | Page count per session type |
+| `processed_session_pages.tsv` | Tracking file for which pages have been processed |
+| `aacr_links.tsv`            | Abstract links, titles, and retrieval status |
+| `aacr_abstracts.tsv`        | Full abstract info: title, authors, abstract text |
+| `log.txt` / `log_<timestamp>.txt` | Per-run logs with progress and errors |
+| `html_dumps/`               | Fallback HTML snapshots for debugging |
+
+---
+
+## 🐛 Troubleshooting
+
+- Chrome must be installed or automatically managed by `webdriver_manager`.
+- Scraper uses a headless browser; ensure sandboxing issues are addressed if running locally.
+- Retry logic is in place, but occasionally, abstract pages may fail due to rendering delays or embargoes.
+
+---
+
+## 🔄 Coming Soon (Ideas)
+
+- Retry embargoed or failed abstracts on later runs
+- Add proxy support to rotate IPs
+- Embed author affiliation parsing
+- Integrate with a database or downstream NLP analysis
+
+---
+
+## 👨‍🔬 Maintainer
+
+Developed by Ian Donaldson with assistance from ChatGPT ("River").  
+For bugs, questions, or contributions — feel free to open an issue or reach out!
+
+```
+
+---
+
+
+
+
 # **SITC Parser**
 
 This repository contains a Python-based web scraper that extracts abstracts and metadata from the **Society for Immunotherapy of Cancer (SITC) conference website**. The script uses **Selenium WebDriver** (with stealth techniques) and **BeautifulSoup** for structured data extraction.

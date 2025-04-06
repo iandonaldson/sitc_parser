@@ -44,9 +44,11 @@ def set_output_paths(base_path):
         "log": base_path / "log.txt",
         "get_links_finished": base_path / "GET_LINKS_FINISHED",
         "session_estimates_ok": base_path / "SESSION_ESTIMATES_FINISHED",
+        "get_abstracts_finished": base_path / "GET_ABSTRACTS_FINISHED",
         "session_estimates": base_path / "session_estimates.tsv",
         "processed_pages": base_path / "processed_session_pages.tsv",
         "aacr_links": base_path / "aacr_links.tsv",
+        "aacr_abstracts": base_path / "aacr_abstracts.tsv",
         "html_dumps": base_path / "html_dumps"
     }
 
@@ -291,7 +293,7 @@ def get_links(session_urls, service, options, paths, max_pages=100):
         remaining = (~processed_df["processed"]).sum()
         print(f"ℹ️ {remaining} pages remaining unprocessed.")
 
-def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
+def get_abstracts(service, options, paths, max_pages=100, save_html=False):
 
     links_path = paths["aacr_links"]
     abstracts_path = paths["aacr_abstracts"]
@@ -320,40 +322,57 @@ def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
         title = row["title"]
         session = row["session"]
 
-        print(f"🧲 Fetching abstract for: {title}")
+        print(f"🧲 Fetching abstract {idx +1} for link: {link}")
 
         try:
             driver = setup_driver(service, options)
             success = safe_get(driver, link)
             if not success:
-                raise Exception("Failed to load page")
+                raise Exception("Page load failed")
 
+            # Wait until a known element is present — this can be tuned.
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.ID, "body"))
+            )
+
+            time.sleep(6)  # Give JS some breathing room.
+
+            # Now grab the full rendered page
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
-            # TODO: Extract real content
-            authors = "[PLACEHOLDER: Authors]"
-            abstract = "[PLACEHOLDER: Abstract]"
-            status = "complete"
+            # Look for the definition list (dl) and walk through it
+            authors = "N/A"
+            abstract = "N/A"
 
+            dl_tag = soup.find("dl")
+            if dl_tag:
+                dt_tags = dl_tag.find_all("dt")
+                dd_tags = dl_tag.find_all("dd")
+
+                for dt, dd in zip(dt_tags, dd_tags):
+                    label = dt.get_text(strip=True).lower()
+                    if "presenter" in label or "author" in label:
+                        authors = dd.get_text(separator=" ", strip=True)
+                    elif "abstract" in label:
+                        abstract = dd.get_text(separator=" ", strip=True)
+
+            # Save to results
             new_rows.append({
                 "link": link,
                 "title": title,
                 "session": session,
                 "authors": authors,
                 "abstract": abstract,
-                "status": status
+                "status": "complete"
             })
-
-            links_df.at[idx, "retrieved"] = True
+            links_df.loc[links_df["link"] == link, "retrieved"] = True
 
             if save_html:
-                page_num = idx + 1
-                dump_file = paths["output"] / f"abstract_PAGE{page_num}.html"
-                with open(dump_file, "w", encoding="utf-8") as f:
+                fallback_file = paths["output"] / f"abstract_fallback_{idx + 1}.html"
+                with open(fallback_file, "w", encoding="utf-8") as f:
                     f.write(driver.page_source)
                 if DEBUG:
-                    print(f"[DEBUG] Saved HTML for abstract page to {dump_file}")
-
+                    print(f"[DEBUG] Saved HTML for abstract page to {fallback_file}")
 
         except Exception as e:
             print(f"❌ Failed to fetch abstract for {title}: {e}")
@@ -379,8 +398,12 @@ def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
             abstracts_df.drop_duplicates(subset=["link"], inplace=True)
         else:
             abstracts_df = updated_df
+
         abstracts_df.to_csv(abstracts_path, sep="\t", index=False)
         print(f"📄 Abstracts updated and saved to {abstracts_path}")
+
+    # Log progress
+    print(f"✅ {len(new_rows)} abstracts processed.")    
 
     # Save updated links with backups
     links_path.rename(links_path.with_suffix(".bak"))
@@ -401,7 +424,9 @@ def main():
     parser.add_argument("--output", type=str, default="output/aacr", help="Path to save outputs")
     parser.add_argument("--estimate", action="store_true", help="Estimate pages for each session type")
     parser.add_argument("--build-all", action="store_true", help="Estimate and scrape all AACR sessions")
-    parser.add_argument("--max-calls-per-session", type=int, default=10, help="Max get_links attempts to process all session pages")
+    parser.add_argument("--max-calls-per-scraper-session", type=int, default=20, help="Max get_abstracts attempts to process all session pages")
+    parser.add_argument("--max-pages", type=int, default=10, help="Max pages to get in each call to get_links or get_abstracts.")
+    parser.add_argument("--wait", type=int, default=120, help="Wait time between get_abstracts attempts.")
     args = parser.parse_args()
 
     import datetime  
@@ -448,6 +473,11 @@ def main():
         return
 
     if args.build_all:
+
+        max_calls = args.max_calls_per_scraper_session
+        max_pages = args.max_pages
+        wait = args.wait
+
         # estimate_all_sessions
         attempts = 0
         while not paths["session_estimates_ok"].exists() and attempts < 3:
@@ -459,13 +489,12 @@ def main():
             return
         else:
             print("✅ Session estimates OK — ready to get links.")
+        
         # get_links
-        max_calls = args.max_calls_per_session
         calls = 0
-
         while not paths["get_links_finished"].exists() and calls < max_calls:
             print(f"🚧 Running get_links (attempt {calls + 1})...")
-            get_links(session_urls, service, options, paths, max_pages=20)
+            get_links(session_urls, service, options, paths, max_pages=max_pages)
             calls += 1
 
         if not paths["get_links_finished"].exists():
@@ -473,11 +502,14 @@ def main():
             return
         else:
             print("✅ Links have been retrieved from all session pages. Ready to retrieve abstracts.")
+        
         # get abstracts
         while not paths["get_abstracts_finished"].exists() and calls < max_calls:
             print(f"🚧 Running get_abstracts (attempt {calls + 1})...")
-            get_abstracts(service, options, paths)
+            get_abstracts(service, options, paths, max_pages=max_pages)
             calls += 1
+            print(f"Sleeping for {wait} seconds")
+            time.sleep(wait)
 
         if not paths["get_abstracts_finished"].exists():
             print("❌ get_abstracts did not complete after maximum allowed attempts.")

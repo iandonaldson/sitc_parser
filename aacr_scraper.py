@@ -298,7 +298,7 @@ def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
     finished_flag = paths["get_abstracts_finished"]
 
     if not links_path.exists():
-        print("❌ aacr_links.tsv not found.")
+        print(f"❌ {links_path} not found.")
         return
 
     links_df = pd.read_csv(links_path, sep="\t")
@@ -312,7 +312,7 @@ def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
     if abstracts_path.exists():
         abstracts_df = pd.read_csv(abstracts_path, sep="\t")
     else:
-        abstracts_df = pd.DataFrame(columns=["link", "title", "authors", "abstract", "status"])
+        abstracts_df = pd.DataFrame(columns=["link", "title", "session", "authors", "abstract", "status"])
 
     new_rows = []
     for idx, row in pending.head(max_pages).iterrows():
@@ -338,6 +338,7 @@ def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
             new_rows.append({
                 "link": link,
                 "title": title,
+                "session": session,
                 "authors": authors,
                 "abstract": abstract,
                 "status": status
@@ -359,6 +360,7 @@ def get_abstracts(service, options, paths, max_pages=1000, save_html=False):
             new_rows.append({
                 "link": link,
                 "title": title,
+                "session": session,
                 "authors": "",
                 "abstract": "",
                 "status": "retry"

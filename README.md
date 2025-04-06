@@ -1,4 +1,3 @@
-```markdown
 # 🔬 AACR Abstract Scraper
 
 This project scrapes abstract information from the AACR Annual Meeting pages hosted on [abstractsonline.com](https://www.abstractsonline.com). It performs a full pipeline: estimating sessions, extracting links, and retrieving abstracts and authors, saving results in `.tsv` format for downstream analysis.

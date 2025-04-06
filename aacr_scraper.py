@@ -522,6 +522,11 @@ def main():
     elapsed = end_time - start_time
     print(f"✅ Finished at {end_time.strftime('%Y-%m-%d %H:%M:%S')} (Elapsed time: {elapsed})")
 
+    # Close the logger before renaming the file
+    if isinstance(sys.stdout, TeeLogger):
+        sys.stdout.log.close()
+        sys.stdout = sys.stdout.terminal
+
     # Rename log.txt to include a timestamp
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_backup_path = output_path / f"log_{timestamp}.txt"

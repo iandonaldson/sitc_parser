@@ -517,6 +517,9 @@ def main():
         else:
             print("✅ All abstracts have been retrieved for all sessions. Ready to retrieve embargoed abstracts.")
 
+        return
+    
+
     # cleanup
     end_time = datetime.datetime.now()
     elapsed = end_time - start_time

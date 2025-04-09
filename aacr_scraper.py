@@ -28,20 +28,6 @@ from selenium_stealth import stealth
 
 import psutil
 
-def kill_chromedriver():
-    for proc in psutil.process_iter(['pid', 'name']):
-        if 'chromedriver' in proc.info['name']:
-            try:
-                proc.kill()
-            except Exception as e:
-                print(f"[DEBUG] Could not kill {proc.info['pid']}: {e}")
-
-
-def log_memory():
-    mem = psutil.virtual_memory()
-    print(f"[DEBUG] Total: {mem.total >> 20} MB | Used: {mem.used >> 20} MB | Free: {mem.free >> 20} MB | Avail: {mem.available >> 20} MB")
-
-
 class TeeLogger:
     def __init__(self, file_path):
         self.terminal = sys.stdout
@@ -113,6 +99,35 @@ def setup_driver(service, options):
     )
     return driver
 
+def kill_chromedriver():
+    for proc in psutil.process_iter(['pid', 'name']):
+        if 'chromedriver' in proc.info['name']:
+            try:
+                proc.kill()
+            except Exception as e:
+                print(f"[DEBUG] Could not kill {proc.info['pid']}: {e}")
+
+
+def log_memory():
+    mem = psutil.virtual_memory()
+    print(f"[DEBUG] Total: {mem.total >> 20} MB | Used: {mem.used >> 20} MB | Free: {mem.free >> 20} MB | Avail: {mem.available >> 20} MB")
+
+def restart_driver(service, options, label=""):
+    print(f"🔄 Restarting driver{f' ({label})' if label else ''} ...")
+    try:
+        driver.quit()
+    except Exception as e:
+        print(f"⚠️ Failed to quit driver cleanly: {e}")
+    kill_chromedriver()
+    log_memory()
+    os.system("sudo sh -c 'echo 3 >/proc/sys/vm/drop_caches'")
+    driver = setup_driver(service, options)
+    print("✅ Driver restarted.")
+    log_memory()
+    print("🌙 Sleeping for 15 seconds before resuming...")
+    time.sleep(15)
+    return driver
+
 def safe_get(driver, url, retries=3, wait=10):
     for attempt in range(retries):
         try:
@@ -159,8 +174,7 @@ def fetch_aacr_title_link_from_html(driver, url, session_name, dump_dir, retries
                 # once this starts happening there is no recovery
                 print(f"WebDriverWait timed out - bailing.")
                 break
-                #if DEBUG:
-                #    print(f"[DEBUG] WebDriverWait timed out — falling back to JS-based polling")
+
             time.sleep(5)
             # JS fallback loop
             for i in range(10):
@@ -208,96 +222,6 @@ def fetch_aacr_title_link_from_html(driver, url, session_name, dump_dir, retries
     # Return empty DataFrame if all attempts fail
     return pd.DataFrame(columns=["link", "title", "retrieved"])
 
-
-
-def fetch_aacr_title_link_from_html_1(service, options, url, session_name, dump_dir, retries=3):
-
-    if DEBUG:
-        print(f"[DEBUG] Trying to fetch url {url} for session {session_name}.")
-    driver = setup_driver(service, options)
-
-    try:
-        success = safe_get(driver, url)
-        if not success:
-            raise Exception("Page load failed after retries")
-
-        try:
-            WebDriverWait(driver, 40).until(
-            # wait for "h1 class="name" data-id=""
-            EC.presence_of_element_located((By.CSS_SELECTOR, "h1.name[data-id]"))
-            )
-        except TimeoutException:
-            print("Timed out waiting for h1.name[data-id]")
-        
-        time.sleep(10)
-        soup = BeautifulSoup(driver.page_source, "html.parser") 
-
-        base_url = "https://www.abstractsonline.com/pp8/#!/20273/presentation/"
-        data = []
-        for h1 in soup.find_all("h1", class_="name"):
-            data_id = h1.get("data-id")
-            title_tag = h1.select_one("span.bodyTitle")
-            if data_id and title_tag:
-                link = f"{base_url}{data_id}"
-                title = title_tag.get_text(strip=True)
-                data.append({"link": link, "title": title, "retrieved": False})
-
-        df = pd.DataFrame(data, columns=["link", "title", "retrieved"])
-        return df
-
-    except Exception as e:
-        print(f"⚠️ Exception in fetch_aacr_title_link_from_html: {e}")
-        if DEBUG:
-            page_num = url.split("/")[-1]
-            safe_session = re.sub(r"\W+", "_", session_name)
-            dump_file = dump_dir / f"{safe_session}_PAGE{page_num}.html"
-            with open(dump_file, "w", encoding="utf-8") as f:
-                f.write(driver.page_source)
-                print(f"[DEBUG] ❌ Saved failed HTML to {dump_file}")
-        return pd.DataFrame(columns=["link", "title", "retrieved"])
-
-    finally:
-        driver.quit()
-
-def fetch_aacr_title_link_from_html_orig(service, options, url, session_name, dump_dir, retries=3):
-    if DEBUG:
-        print(f"[DEBUG] Trying to fetch url {url} for session {session_name}.")
-    driver = setup_driver(service, options)
-
-    try:
-        success = safe_get(driver, url)
-        if not success:
-            raise Exception("Page load failed after retries")
-
-        time.sleep(10)  # ensure JS executes
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-
-        base_url = "https://www.abstractsonline.com/pp8/#!/20273/presentation/"
-        data = []
-        for h1 in soup.find_all("h1", class_="name"):
-            data_id = h1.get("data-id")
-            title_tag = h1.select_one("span.bodyTitle")
-            if data_id and title_tag:
-                link = f"{base_url}{data_id}"
-                title = title_tag.get_text(strip=True)
-                data.append({"link": link, "title": title, "retrieved": False})
-
-        df = pd.DataFrame(data, columns=["link", "title", "retrieved"])
-        return df
-
-    except Exception as e:
-        print(f"⚠️ Exception in fetch_aacr_title_link_from_html: {e}")
-        page_num = url.split("/")[-1]
-        safe_session = re.sub(r"\W+", "_", session_name)
-        dump_file = dump_dir / f"{safe_session}_PAGE{page_num}.html"
-        with open(dump_file, "w", encoding="utf-8") as f:
-            f.write(driver.page_source)
-        if DEBUG:
-            print(f"[DEBUG] ❌ Saved failed HTML to {dump_file}")
-        return pd.DataFrame(columns=["link", "title", "retrieved"])
-
-    finally:
-        driver.quit()
 
 
 def extract_session_name(url):
@@ -387,6 +311,9 @@ def get_links(session_urls, service, options, paths, max_pages=100):
     dump_dir.mkdir(parents=True, exist_ok=True)
     finished_path = paths["get_links_finished"]
     driver = setup_driver(service, options)
+    # limit driver restarts
+    restart_attempts = 0
+    max_restart_attempts = 10
 
     # Load estimates if not already loaded
     if not estimates_path.exists():
@@ -443,14 +370,12 @@ def get_links(session_urls, service, options, paths, max_pages=100):
                 print(f"⚠️ Only retrieved {len(df)} links from page {page_num} of session '{session_name}' (expected 10).")
             # has the connection fallen over - try to recover
             if len(df) == 0:
-                print(f"Quitting, killing and restarting driver ...")
-                driver.quit()
-                kill_chromedriver()
-                log_memory()
-                os.system("sudo sh -c 'echo 3 >/proc/sys/vm/drop_caches'")
-                driver = setup_driver(service, options)
-                print(f"Driver restarted")
-                log_memory()
+                restart_attempts += 1
+                if restart_attempts >= max_restart_attempts:
+                    print(f"❌ Giving up on page {page_num} of session '{session_name}' after {max_restart_attempts} restart attempts.")
+                    continue
+                else:
+                    driver = restart_driver(service, options, label=f"session={session_name}, page={page_num}")
 
             # prep df with just new links and add
             df["session"] = session_name    

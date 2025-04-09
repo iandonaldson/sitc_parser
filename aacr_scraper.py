@@ -26,6 +26,20 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium_stealth import stealth
 
 
+import psutil
+
+def kill_chromedriver():
+    for proc in psutil.process_iter(['pid', 'name']):
+        if 'chromedriver' in proc.info['name']:
+            try:
+                proc.kill()
+            except Exception as e:
+                print(f"[DEBUG] Could not kill {proc.info['pid']}: {e}")
+
+
+def log_memory():
+    mem = psutil.virtual_memory()
+    print(f"[DEBUG] Total: {mem.total >> 20} MB | Used: {mem.used >> 20} MB | Free: {mem.free >> 20} MB | Avail: {mem.available >> 20} MB")
 
 
 class TeeLogger:
@@ -82,6 +96,9 @@ def get_chrome_options():
     if DEBUG:
         print(f"[DEBUG] Using user agent: {user_agent}")
         print(f"[DEBUG] Window size: {width}x{height}")
+    # prevent memory bloat
+    # options.add_argument("--single-process")
+    options.add_argument("--memory-pressure-off")
     return options
 
 def setup_driver(service, options):
@@ -139,8 +156,11 @@ def fetch_aacr_title_link_from_html(driver, url, session_name, dump_dir, retries
                 if DEBUG:
                     print(f"[DEBUG] WebDriverWait succeeded on attempt {attempt}")
             except TimeoutException:
-                if DEBUG:
-                    print(f"[DEBUG] WebDriverWait timed out — falling back to JS-based polling")
+                # once this starts happening there is no recovery
+                print(f"WebDriverWait timed out - bailing.")
+                break
+                #if DEBUG:
+                #    print(f"[DEBUG] WebDriverWait timed out — falling back to JS-based polling")
             time.sleep(5)
             # JS fallback loop
             for i in range(10):
@@ -191,6 +211,7 @@ def fetch_aacr_title_link_from_html(driver, url, session_name, dump_dir, retries
 
 
 def fetch_aacr_title_link_from_html_1(service, options, url, session_name, dump_dir, retries=3):
+
     if DEBUG:
         print(f"[DEBUG] Trying to fetch url {url} for session {session_name}.")
     driver = setup_driver(service, options)
@@ -415,11 +436,22 @@ def get_links(session_urls, service, options, paths, max_pages=100):
         
         try:
             df = fetch_aacr_title_link_from_html(driver, url, session_name, dump_dir)
-            # were all 10 expected links retrieved?
+            # were all 10 expected links retrieved? mark the page as processed
             if len(df) == 10 or is_last_page:
                 processed_df.loc[idx, "processed"] = True
             else:
                 print(f"⚠️ Only retrieved {len(df)} links from page {page_num} of session '{session_name}' (expected 10).")
+            # has the connection fallen over - try to recover
+            if len(df) == 0:
+                print(f"Quitting, killing and restarting driver ...")
+                driver.quit()
+                kill_chromedriver()
+                log_memory()
+                os.system("sudo sh -c 'echo 3 >/proc/sys/vm/drop_caches'")
+                driver = setup_driver(service, options)
+                print(f"Driver restarted")
+                log_memory()
+
             # prep df with just new links and add
             df["session"] = session_name    
             df = df[~df["link"].isin(seen_links)]

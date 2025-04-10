@@ -568,6 +568,28 @@ def reset_processed_sessions(paths, session_list):
             print(f"❌ Removed {abstracts_finished_flag} because some sessions were reset.")
 
 
+def sync_links_with_abstracts(paths):
+    links_path = paths["aacr_links"]
+    abstracts_path = paths["aacr_abstracts"]
+
+    if not links_path.exists() or not abstracts_path.exists():
+        print("❌ Required file not found.")
+        return
+
+    # Load both tables
+    links_df = pd.read_csv(links_path, sep="\t")
+    abstracts_df = pd.read_csv(abstracts_path, sep="\t")
+
+    # Convert links to sets for efficient lookup
+    abstract_links_set = set(abstracts_df["link"])
+
+    # Update `retrieved` flag based on presence in abstracts
+    links_df["retrieved"] = links_df["link"].apply(lambda l: l in abstract_links_set)
+
+    # Backup and save
+    links_path.rename(links_path.with_suffix(".bak"))
+    links_df.to_csv(links_path, sep="\t", index=False)
+    print(f"🔁 Synced links with abstracts. Updated file saved to {links_path}")
 
 
 def main():
@@ -583,7 +605,7 @@ def main():
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages to get in each call to get_links or get_abstracts.")
     parser.add_argument("--wait", type=int, default=12, help="Wait time between get_abstracts attempts.")
     parser.add_argument("--reset-processed-sessions", type=str, help="Comma-separated list of session names to reset in processed_session_pages.tsv or 'all'")
-
+    parser.add_argument("--check-abstract-retrieval", action="store_true", help="Sync retrieved status in aacr_links.tsv with presence in aacr_abstracts.tsv")
     args = parser.parse_args()
 
     import datetime  
@@ -631,6 +653,10 @@ def main():
 
     if args.reset_processed_sessions:
         reset_processed_sessions(paths, args.reset_processed_sessions)
+
+    if args.check_abstract_retrieval:
+        sync_links_with_abstracts(paths)
+        return
 
     if args.build_all:
 

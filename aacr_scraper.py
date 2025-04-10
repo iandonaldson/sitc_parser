@@ -42,9 +42,11 @@ class TeeLogger:
         self.log.flush()
 
 def set_output_paths(base_path):
+    logs_path = base_path / "logs"
+    logs_path.mkdir(parents=True, exist_ok=True)  # Ensure it exists
     return {
         "output" : base_path,
-        "log": base_path / "log.txt",
+        "log": logs_path / "log.txt",
         "get_links_finished": base_path / "GET_LINKS_FINISHED",
         "session_estimates_ok": base_path / "SESSION_ESTIMATES_FINISHED",
         "get_abstracts_finished": base_path / "GET_ABSTRACTS_FINISHED",
@@ -106,7 +108,6 @@ def kill_chromedriver():
                 proc.kill()
             except Exception as e:
                 print(f"[DEBUG] Could not kill {proc.info['pid']}: {e}")
-
 
 def log_memory():
     mem = psutil.virtual_memory()
@@ -418,6 +419,7 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
 
     links_df = pd.read_csv(links_path, sep="\t")
     pending = links_df[links_df["retrieved"] == False]
+    print(f"🔎 {len(pending)} abstracts pending retrieval.")
 
     if pending.empty:
         finished_flag.touch()
@@ -430,6 +432,7 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
         abstracts_df = pd.DataFrame(columns=["link", "title", "session", "authors", "abstract", "status"])
 
     new_rows = []
+    start_time = time.time()  # ⏱️ Start batch timer
     for idx, row in pending.head(max_pages).iterrows():
         link = row["link"]
         title = row["title"]
@@ -443,19 +446,15 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
             if not success:
                 raise Exception("Page load failed")
 
-            # Wait until a known element is present — this can be tuned.
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.ID, "body"))
             )
-            time.sleep(6)  # Give JS some breathing room.
+            time.sleep(6)
 
-            # Now grab the full rendered page
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
-            # Look for the definition list (dl) and walk through it
             authors = "N/A"
             abstract = "N/A"
-
             dl_tag = soup.find("dl")
             if dl_tag:
                 dt_tags = dl_tag.find_all("dt")
@@ -468,7 +467,6 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
                     elif "abstract" in label:
                         abstract = dd.get_text(separator=" ", strip=True)
 
-            # Save to results
             new_rows.append({
                 "link": link,
                 "title": title,
@@ -501,7 +499,14 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
             driver.quit()
             time.sleep(random.uniform(2, 4))
 
-    # Save updated abstract data
+    elapsed_time = time.time() - start_time  # ⏱️ End batch timer
+    if new_rows:
+        avg_time = elapsed_time / len(new_rows)
+        remaining = links_df["retrieved"].value_counts().get(False, 0)
+        est_total = int(avg_time * remaining)
+        est_min, est_sec = divmod(est_total, 60)
+        print(f"⏳ Avg time/abstract: {avg_time:.1f} sec — Estimated time remaining: {est_min} min {est_sec} sec")
+
     if new_rows:
         updated_df = pd.DataFrame(new_rows)
         if abstracts_path.exists():
@@ -514,10 +519,8 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
         abstracts_df.to_csv(abstracts_path, sep="\t", index=False)
         print(f"📄 Abstracts updated and saved to {abstracts_path}")
 
-    # Log progress
     print(f"✅ {len(new_rows)} abstracts processed.")    
 
-    # Save updated links with backups
     links_path.rename(links_path.with_suffix(".bak"))
     links_df.to_csv(links_path, sep="\t", index=False)
     print(f"📌 Updated aacr_links.tsv with retrieval status.")
@@ -576,9 +579,9 @@ def main():
     parser.add_argument("--output", type=str, default="output/aacr", help="Path to save outputs")
     parser.add_argument("--estimate", action="store_true", help="Estimate pages for each session type")
     parser.add_argument("--build-all", action="store_true", help="Estimate and scrape all AACR sessions")
-    parser.add_argument("--max-calls-per-scraper-session", type=int, default=50, help="Max get_abstracts attempts to process all session pages")
+    parser.add_argument("--max-calls-per-scraper-session", type=int, default=500, help="Max get_abstracts attempts to process all session pages")
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages to get in each call to get_links or get_abstracts.")
-    parser.add_argument("--wait", type=int, default=120, help="Wait time between get_abstracts attempts.")
+    parser.add_argument("--wait", type=int, default=12, help="Wait time between get_abstracts attempts.")
     parser.add_argument("--reset-processed-sessions", type=str, help="Comma-separated list of session names to reset in processed_session_pages.tsv or 'all'")
 
     args = parser.parse_args()
@@ -689,7 +692,7 @@ def main():
 
     # Rename log.txt to include a timestamp
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_backup_path = output_path / f"log_{timestamp}.txt"
+    log_backup_path = paths["log"].with_name(f"log_{timestamp}.txt")
     paths["log"].rename(log_backup_path)
 
 

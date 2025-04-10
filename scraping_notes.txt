@@ -1,0 +1,12 @@
+Check out
+https://www.scraperapi.com/web-scraping/python/
+https://www.scraperapi.com/web-scraping/best-practices/
+
+It may be the case that there are more rows in aacr_links.tsv 
+than rows of retrieved abstracts in aacr_abstracts.tsv because
+some links in aacr_links are redundant.
+
+Try 
+cut -f 2 aacr_links.tsv | sort -uc | wc -l
+versus
+wc -l aacr_abstracts.tsv

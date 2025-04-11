@@ -9,7 +9,9 @@ This project scrapes abstract information from the AACR Annual Meeting pages hos
 - Estimate number of pages per session type
 - Scrape links to individual abstract presentations
 - Retrieve titles, authors, and abstract text (even if JavaScript-rendered)
-- Save results incrementally with checkpointing and log tracking
+- Incremental checkpointing, restartable scraping
+- Automatic driver restarts with memory diagnostics
+- Reset and synchronization utilities for embargoed, blank, or missing abstracts
 - Designed for GitHub Codespaces or local Python environments
 
 ---
@@ -31,46 +33,74 @@ pip install -r requirements.txt
 
 ## 🔧 Usage
 
-All output is written to the `output/aacr` directory by default, and logs are saved per run with timestamped filenames.
+All output is written to the `output/aacr` directory by default.
 
-### Estimate session sizes
-```bash
-python aacr_scraper.py --estimate
-```
-
-### Run full scraping pipeline (estimate + links + abstracts)
+### Run full scraping pipeline (estimate → links → abstracts)
 ```bash
 python aacr_scraper.py --build-all
 ```
 
-You can control scraper limits:
+With control over limits:
 ```bash
 python aacr_scraper.py --build-all --max-pages 10 --max-calls-per-scraper-session 20 --wait 120
 ```
 
-### Test-only commands
-```bash
-python aacr_scraper.py --test-landing-page
-python aacr_scraper.py --test-get-links
-python aacr_scraper.py --test-get-abstracts
-```
+---
+
+### ✅ Maintenance and Recovery Commands
+
+These are especially useful during or between `--build-all` runs:
+
+| Command | Purpose |
+|---------|---------|
+| `--check-abstract-retrieval` | Resync `retrieved` flags in `aacr_links.tsv` based on `aacr_abstracts.tsv` |
+| `--reset-embargoed-abstracts` | Mark as un-retrieved all abstracts containing “embargoed” |
+| `--reset-embargoed-and-blank-abstracts` | Same as above, plus abstracts that are empty/missing |
+| `--reset-processed-sessions "Minisymposium"` | Reset processed flags for a specific session |
+| `--reset-processed-sessions "all"` | Reset all session pages to unprocessed |
+
+These can be run independently **before**, **during**, or **between** `--build-all` invocations.
+
+---
+
+### 🔁 Example Recovery Flow
+
+1. Reset all embargoed and blank abstracts to be fetched again:
+   ```bash
+   python aacr_scraper.py --reset-embargoed-and-blank-abstracts
+   ```
+
+2. Re-check that your links file matches the current abstracts:
+   ```bash
+   python aacr_scraper.py --check-abstract-retrieval
+   ```
+
+3. Rerun the build with:
+   ```bash
+   python aacr_scraper.py --build-all
+   ```
 
 ---
 
 ## ⚙️ Command-line Arguments
 
-| Flag                                 | Description |
-|--------------------------------------|-------------|
-| `--estimate`                         | Estimate pages for each AACR session type |
-| `--build-all`                        | Full pipeline: estimate → links → abstracts |
-| `--test-get-links`                   | Test `get_links` with one page |
-| `--test-get-abstracts`               | Test `get_abstracts` and save rendered HTML |
-| `--test-landing-page`                | Render and save the first session page |
-| `--max-pages`                        | Max pages per scraper function call (default: 10) |
-| `--max-calls-per-scraper-session`   | Max iterations per scraper step (default: 20) |
-| `--wait`                             | Time (seconds) between calls during `--build-all` |
-| `--output`                           | Base output directory (default: `output/aacr`) |
-| `--debug`                            | Enable debug mode for verbose logging |
+| Flag | Description |
+|------|-------------|
+| `--estimate` | Estimate pages for each AACR session type |
+| `--build-all` | Full pipeline: estimate → links → abstracts |
+| `--test-get-links` | Run `get_links` with just one page |
+| `--test-get-abstracts` | Run `get_abstracts` with one abstract (saves HTML) |
+| `--test-landing-page` | Load and save rendered HTML of the first landing page |
+| `--max-pages` | Max pages per scraper run (default: `10`) |
+| `--max-calls-per-scraper-session` | Max iterations during build (default: `500`) |
+| `--wait` | Sleep (in seconds) between calls during `--build-all` |
+| `--debug` | Enable debug logging |
+| `--output` | Output directory (default: `output/aacr`) |
+| `--reset-processed-sessions "SESSION"` | Reset page flags for one or more sessions |
+| `--reset-processed-sessions "all"` | Reset all sessions in `processed_session_pages.tsv` |
+| `--check-abstract-retrieval` | Ensure all links in `aacr_links.tsv` match `aacr_abstracts.tsv` |
+| `--reset-embargoed-abstracts` | Reset `retrieved` flags for embargoed abstracts only |
+| `--reset-embargoed-and-blank-abstracts` | Reset `retrieved` flags for embargoed *and* blank abstracts |
 
 ---
 
@@ -78,38 +108,37 @@ python aacr_scraper.py --test-get-abstracts
 
 | File | Description |
 |------|-------------|
-| `session_estimates.tsv`     | Page count per session type |
-| `processed_session_pages.tsv` | Tracking file for which pages have been processed |
-| `aacr_links.tsv`            | Abstract links, titles, and retrieval status |
-| `aacr_abstracts.tsv`        | Full abstract info: title, authors, abstract text |
-| `log.txt` / `log_<timestamp>.txt` | Per-run logs with progress and errors |
-| `html_dumps/`               | Fallback HTML snapshots for debugging |
+| `session_estimates.tsv` | Estimated number of pages per session |
+| `processed_session_pages.tsv` | Tracks progress by session/page |
+| `aacr_links.tsv` | All known abstract links and titles |
+| `aacr_abstracts.tsv` | Full abstract content |
+| `html_dumps/*.html` | Debug fallback HTML files (per-page) |
+| `logs/log.txt` | Live log of current run |
+| `logs/log_<timestamp>.txt` | Archived logs from previous runs |
+
+Logs have been moved to the `logs/` subfolder inside `output/aacr`.
 
 ---
 
-## 🐛 Troubleshooting
+## 🐛 Troubleshooting Tips
 
-- Chrome must be installed or automatically managed by `webdriver_manager`.
-- Scraper uses a headless browser; ensure sandboxing issues are addressed if running locally.
-- Retry logic is in place, but occasionally, abstract pages may fail due to rendering delays or embargoes.
+- If scraping starts failing (timeouts, empty links), try:
+  - `--reset-embargoed-and-blank-abstracts`
+  - `--check-abstract-retrieval`
+  - `--reset-processed-sessions "Poster Session"`
 
----
-
-## 🔄 Coming Soon (Ideas)
-
-- Retry embargoed or failed abstracts on later runs
-- Add proxy support to rotate IPs
-- Embed author affiliation parsing
-- Integrate with a database or downstream NLP analysis
+- If issues persist for specific pages, investigate saved HTML dumps in `html_dumps`.
 
 ---
 
 ## 👨‍🔬 Maintainer
 
-Developed by Ian Donaldson with assistance from ChatGPT ("River").  
-For bugs, questions, or contributions — feel free to open an issue or reach out!
+Developed by Ian Donaldson with assistance from ChatGPT (“River”).  
+For bugs, ideas, or contributions — open an issue or get in touch!
 
+---
 
+Let me know if you’d like a shorter quickstart version as well!
 # **SITC Parser**
 
 This repository contains a Python-based web scraper that extracts abstracts and metadata from the **Society for Immunotherapy of Cancer (SITC) conference website**. The script uses **Selenium WebDriver** (with stealth techniques) and **BeautifulSoup** for structured data extraction.  This is a minimal project that demonstrates some of the central tools and methods required for a web scraper project.

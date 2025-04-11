@@ -591,6 +591,58 @@ def sync_links_with_abstracts(paths):
     links_df.to_csv(links_path, sep="\t", index=False)
     print(f"🔁 Synced links with abstracts. Updated file saved to {links_path}")
 
+import pandas as pd
+
+import pandas as pd
+
+def reset_embargoed_abstracts(abstracts_path, links_path, reset_missing=False):
+    """
+    Resets 'retrieved' to False in the links table for:
+    - abstracts containing the word 'embargoed'
+    - optionally, abstracts that are blank or missing
+    """
+    if not abstracts_path.exists():
+        print(f"❌ Abstracts file not found: {abstracts_path}")
+        return
+    if not links_path.exists():
+        print(f"❌ Links file not found: {links_path}")
+        return
+
+    abstracts_df = pd.read_csv(abstracts_path, sep="\t")
+    links_df = pd.read_csv(links_path, sep="\t")
+
+    embargoed_links = abstracts_df[
+        abstracts_df["abstract"].str.contains("embargoed", case=False, na=False)
+    ]["link"].tolist()
+
+    missing_links = []
+    if reset_missing:
+        missing_links = abstracts_df[
+            abstracts_df["abstract"].isnull() | (abstracts_df["abstract"].str.strip() == "")
+        ]["link"].tolist()
+
+    all_reset_links = set(embargoed_links + missing_links)
+
+    if not all_reset_links:
+        print("ℹ️ No embargoed or missing abstracts found.")
+        return
+
+    # Backup links file
+    links_backup = links_path.with_suffix(".bak")
+    links_path.rename(links_backup)
+
+    # Reset retrieved flag
+    updated = 0
+    for link in all_reset_links:
+        match = links_df["link"] == link
+        if match.any():
+            links_df.loc[match, "retrieved"] = False
+            updated += 1
+
+    links_df.to_csv(links_path, sep="\t", index=False)
+    print(f"🔁 Reset retrieved=False for {updated} abstract(s). Backup saved as: {links_backup}")
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="AACR Abstract Scraper")
@@ -606,6 +658,8 @@ def main():
     parser.add_argument("--wait", type=int, default=12, help="Wait time between get_abstracts attempts.")
     parser.add_argument("--reset-processed-sessions", type=str, help="Comma-separated list of session names to reset in processed_session_pages.tsv or 'all'")
     parser.add_argument("--check-abstract-retrieval", action="store_true", help="Sync retrieved status in aacr_links.tsv with presence in aacr_abstracts.tsv")
+    parser.add_argument("--reset-embargoed-abstracts", action="store_true", help="Reset retrieved=False for abstracts marked as embargoed")
+    parser.add_argument("--reset-embargoed-and-blank-abstracts", action="store_true", help="Reset retrieved status for embargoed or blank abstracts")
     args = parser.parse_args()
 
     import datetime  
@@ -656,6 +710,14 @@ def main():
 
     if args.check_abstract_retrieval:
         sync_links_with_abstracts(paths)
+        return
+    
+    if args.reset_embargoed_abstracts:
+        reset_embargoed_abstracts(paths["aacr_abstracts"], paths["aacr_links"])
+        return
+    
+    if args.reset_embargoed_and_blank_abstracts:
+        reset_embargoed_abstracts(paths, reset_blank=True)
         return
 
     if args.build_all:

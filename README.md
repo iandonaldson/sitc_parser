@@ -138,7 +138,6 @@ For bugs, ideas, or contributions — open an issue or get in touch!
 
 ---
 
-Let me know if you’d like a shorter quickstart version as well!
 # **SITC Parser**
 
 This repository contains a Python-based web scraper that extracts abstracts and metadata from the **Society for Immunotherapy of Cancer (SITC) conference website**. The script uses **Selenium WebDriver** (with stealth techniques) and **BeautifulSoup** for structured data extraction.  This is a minimal project that demonstrates some of the central tools and methods required for a web scraper project.

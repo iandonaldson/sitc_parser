@@ -408,7 +408,6 @@ def get_links(session_urls, service, options, paths, max_pages=100):
     driver.quit()
 
 def get_abstracts(service, options, paths, max_pages=100, save_html=False):
-
     links_path = paths["aacr_links"]
     abstracts_path = paths["aacr_abstracts"]
     finished_flag = paths["get_abstracts_finished"]
@@ -432,13 +431,14 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
         abstracts_df = pd.DataFrame(columns=["link", "title", "session", "authors", "abstract", "status"])
 
     new_rows = []
-    start_time = time.time()  # ⏱️ Start batch timer
+    start_time = time.time()
+
     for idx, row in pending.head(max_pages).iterrows():
         link = row["link"]
         title = row["title"]
         session = row["session"]
 
-        print(f"🧲 Fetching abstract {idx +1} for link: {link}")
+        print(f"🧲 Fetching abstract {idx + 1} for link: {link}")
 
         try:
             driver = setup_driver(service, options)
@@ -446,17 +446,21 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
             if not success:
                 raise Exception("Page load failed")
 
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.ID, "body"))
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.XPATH, "//dt[contains(text(),'Abstract')]"))
             )
-            time.sleep(6)
+            time.sleep(6)  # Let the page stabilize
+
+            if DEBUG:
+                print("[DEBUG] Length of page source:", len(driver.page_source))
+                print("[DEBUG] Preview snippet:", driver.page_source[:500])
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
             authors = "N/A"
             abstract = "N/A"
-            dl_tag = soup.find("dl")
-            if dl_tag:
+
+            for dl_tag in soup.find_all("dl"):
                 dt_tags = dl_tag.find_all("dt")
                 dd_tags = dl_tag.find_all("dd")
 
@@ -465,7 +469,18 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
                     if "presenter" in label or "author" in label:
                         authors = dd.get_text(separator=" ", strip=True)
                     elif "abstract" in label:
-                        abstract = dd.get_text(separator=" ", strip=True)
+                        attempts = 0
+                        while attempts < 10:
+                            abstract = dd.get_text(separator=" ", strip=True)
+                            if abstract and not abstract.lower().startswith("abstract is embargoed"):
+                                break
+                            time.sleep(1)
+                            attempts += 1
+                        if DEBUG:
+                            print(f"[DEBUG] Abstract preview after polling: {abstract[:50]!r}")
+                        break
+                if abstract and abstract != "N/A":
+                    break
 
             new_rows.append({
                 "link": link,
@@ -499,7 +514,7 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
             driver.quit()
             time.sleep(random.uniform(2, 4))
 
-    elapsed_time = time.time() - start_time  # ⏱️ End batch timer
+    elapsed_time = time.time() - start_time
     if new_rows:
         avg_time = elapsed_time / len(new_rows)
         remaining = links_df["retrieved"].value_counts().get(False, 0)
@@ -512,13 +527,19 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
         if abstracts_path.exists():
             abstracts_path.rename(abstracts_path.with_suffix(".bak"))
             abstracts_df = pd.concat([abstracts_df, updated_df], ignore_index=True)
-            abstracts_df.drop_duplicates(subset=["link"], inplace=True)
+            abstracts_df["abstract_length"] = abstracts_df["abstract"].fillna("").apply(len)
+            abstracts_df = abstracts_df.sort_values(["link", "abstract_length"], ascending=[True, False])
+            if DEBUG:
+                concat_path = abstracts_path.parent / "aacr_abstracts_concat.tsv"
+                abstracts_df.to_csv(concat_path, sep="\t", index=False)
+                print(f"[DEBUG] Intermediate concatenated file saved to {concat_path}")
+            abstracts_df = abstracts_df.drop_duplicates(subset=["link"], keep="first")
+            abstracts_df.drop(columns=["abstract_length"], inplace=True)
         else:
             abstracts_df = updated_df
 
-        abstracts_df.to_csv(abstracts_path, sep="\t", index=False)
-        print(f"📄 Abstracts updated and saved to {abstracts_path}")
-
+    abstracts_df.to_csv(abstracts_path, sep="\t", index=False)
+    print(f"📄 Abstracts updated and saved to {abstracts_path}")
     print(f"✅ {len(new_rows)} abstracts processed.")    
 
     links_path.rename(links_path.with_suffix(".bak"))
@@ -528,6 +549,7 @@ def get_abstracts(service, options, paths, max_pages=100, save_html=False):
     if links_df["retrieved"].all():
         finished_flag.touch()
         print(f"✅ All abstracts have been retrieved. Flag file created: {finished_flag}")
+
 
 def reset_processed_sessions(paths, session_list):
     processed_path = paths["processed_pages"]
@@ -591,16 +613,76 @@ def sync_links_with_abstracts(paths):
     links_df.to_csv(links_path, sep="\t", index=False)
     print(f"🔁 Synced links with abstracts. Updated file saved to {links_path}")
 
-import pandas as pd
 
-import pandas as pd
+def reset_embargoed_abstracts(paths, reset_blank=False):
+    """
+    Resets 'retrieved' to False in the links table for:
+    - abstracts containing the word 'embargoed'
+    - optionally, abstracts that are blank or missing.
+    Also removes the GET_ABSTRACTS_FINISHED flag if any updates occur.
+    """
+    abstracts_path = paths["aacr_abstracts"]
+    links_path = paths["aacr_links"]
+    abstracts_finished_flag = paths["get_abstracts_finished"]
 
-def reset_embargoed_abstracts(abstracts_path, links_path, reset_missing=False):
+    if not abstracts_path.exists():
+        print(f"❌ Abstracts file not found: {abstracts_path}")
+        return
+    if not links_path.exists():
+        print(f"❌ Links file not found: {links_path}")
+        return
+
+    abstracts_df = pd.read_csv(abstracts_path, sep="\t")
+    links_df = pd.read_csv(links_path, sep="\t")
+
+    embargoed_links = abstracts_df[
+        abstracts_df["abstract"].str.contains("embargoed", case=False, na=False)
+    ]["link"].tolist()
+
+    missing_links = []
+    if reset_blank:
+        missing_links = abstracts_df[
+            abstracts_df["abstract"].isnull() | (abstracts_df["abstract"].str.strip() == "")
+        ]["link"].tolist()
+
+    all_reset_links = set(embargoed_links + missing_links)
+
+    if not all_reset_links:
+        print("ℹ️ No embargoed or missing abstracts found.")
+        return
+
+    # Backup links file
+    links_backup = links_path.with_suffix(".bak")
+    links_path.rename(links_backup)
+
+    # Reset retrieved flag
+    updated = 0
+    for link in all_reset_links:
+        match = links_df["link"] == link
+        if match.any():
+            links_df.loc[match, "retrieved"] = False
+            updated += 1
+
+    links_df.to_csv(links_path, sep="\t", index=False)
+    print(f"🔁 Reset retrieved=False for {updated} abstract(s). Backup saved as: {links_backup}")
+
+    # Remove GET_ABSTRACTS_FINISHED if we reset anything
+    if updated > 0 and abstracts_finished_flag.exists():
+        abstracts_finished_flag.unlink()
+        print(f"❌ Removed {abstracts_finished_flag} because abstracts need to be re-fetched.")
+
+
+
+def reset_embargoed_abstracts_x(paths, reset_missing=False):
+
     """
     Resets 'retrieved' to False in the links table for:
     - abstracts containing the word 'embargoed'
     - optionally, abstracts that are blank or missing
     """
+    abstracts_path = paths["aacr_abstracts"]
+    links_path = paths["aacr_links"]
+
     if not abstracts_path.exists():
         print(f"❌ Abstracts file not found: {abstracts_path}")
         return
@@ -712,13 +794,15 @@ def main():
         sync_links_with_abstracts(paths)
         return
     
-    if args.reset_embargoed_abstracts:
-        reset_embargoed_abstracts(paths["aacr_abstracts"], paths["aacr_links"])
-        return
     
     if args.reset_embargoed_and_blank_abstracts:
         reset_embargoed_abstracts(paths, reset_blank=True)
         return
+
+    if args.reset_embargoed_abstracts:
+        reset_embargoed_abstracts(paths)
+        return
+
 
     if args.build_all:
 
@@ -766,6 +850,10 @@ def main():
             print("❌ get_abstracts did not complete after maximum allowed attempts.")
         else:
             print("✅ All abstracts have been retrieved for all sessions. Ready to retrieve embargoed abstracts.")
+            print("✅ Run python aacr_scraper.py --reset-embargoed-abstracts")
+            print("✅ Run python aacr_scraper.py --build-all")
+
+            
     
 
     # cleanup
